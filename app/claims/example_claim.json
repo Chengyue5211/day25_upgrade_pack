@@ -1,0 +1,20 @@
+{
+  "claim_generator": "LeapCraft/Upgrade25 Demo",
+  "format": "image/png",
+  "assertions": [
+    {
+      "label": "stds.schema-org.CreativeWork",
+      "data": {
+        "author": "LeapCraft Demo",
+        "about": "Evidence Upgrade 2.5"
+      }
+    },
+    {
+      "label": "stds.iptc.photo-metadata",
+      "data": {
+        "title": "Upgrade 2.5",
+        "caption": "Signed via c2patool"
+      }
+    }
+  ]
+}
