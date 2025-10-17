@@ -1,4 +1,5 @@
-
+[![CI](https://github.com/Chengyue5211/day25_upgrade_pack/actions/workflows/ci.yml/badge.svg)](https://github.com/Chengyue5211/day25_upgrade_pack/actions/workflows/ci.yml)
+  
 # Day 2.5 · Real C2PA + TSA（RFC3161）· Upgrade Pack
 
 这是一套**可直接跑**的最小示例，把你之前的“本地内容凭证/锚定”升级为**真 C2PA**与**真 TSA 时间戳回执**，并附带一个简易核验页。
