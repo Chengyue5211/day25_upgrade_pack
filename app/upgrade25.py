@@ -72,7 +72,20 @@ def c2pa_embed(req: C2PAEmbedRequest):
     insert_evidence("demo-cert", out_path, digest)
     update_evidence("demo-cert", c2pa_out=out_path, c2pa_status="signed", c2pa_signed_by=os.path.basename(req.signer_cert_path))
 
-    return {"ok": True, "out_path": out_path, "sha256": digest, "log": r.stdout}
+    # —— save to DB (demo hook) ——
+from app.hook_demo_save import after_certify_demo
+after_certify_demo("demo-cert", {
+    "title": locals().get("title"),
+    "author": locals().get("author"),
+    "verify_url": out_path,          # 没有专门核验页就先用生成文件路径
+    "manifest_hash": digest,         # 刚算出来的 sha256
+    "anchors": {"kind": "c2pa"},     # 先放占位，后续接 TSA/链回执再补 txid/tsa/sig
+    "attestation_type": "demo",
+    "status": "ok",
+    "tenant_id": "default",
+})
+# —— end of hook ——
+return {"ok": True, "out_path": out_path, "sha256": digest, "log": r.stdout}
 
 def _derive_out_path(path: str) -> str:
     root, ext = os.path.splitext(path)
