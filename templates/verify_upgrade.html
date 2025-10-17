@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Verify · Upgrade 2.5 Demo</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system; padding: 24px; color:#111827; }
+    .muted { color:#4b5563; font-size:14px; margin-top:4px }
+  </style>
+</head>
+<body>
+  <h1>Day 2.5 · Verify</h1>
+  {% if db_title or db_created_at %}
+    <p class="muted">DB · {{ db_title or '-' }} · {{ db_created_at or '-' }} · {{ db_manifest_hash or '' }}</p>
+  {% endif %}
+
+  <h2>Cert ID: {{ cert_id }}</h2>
+  <pre>{{ ev | tojson(indent=2) }}</pre>
+</body>
+</html>
