@@ -147,3 +147,6 @@ app.include_router(upgrade25_router, prefix="/v1/upgrade25")
 - 加入“日根 Merkle 计算 + 双栈锚定（联盟链 + 公链测试网）”。
 
 祝贺！你已完成 Day 2.5 的“真 C2PA + 真 TSA”升级最小闭环。
+
+> Update: add CI badge and minor doc tweaks.
+
