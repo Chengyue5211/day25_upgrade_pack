@@ -1,0 +1,3 @@
+﻿* text=auto eol=lf
+# PowerShell 脚本保留 Windows 风格换行（如有需要）
+*.ps1 text eol=crlf
