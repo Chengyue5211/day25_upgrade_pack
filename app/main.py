@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-
+from traceback import format_exc
 from app.db import (
     init_db, get_db, get_evidence,
     add_receipt, get_last_receipts, get_last_status_txid,
@@ -43,16 +43,34 @@ def verify_upgrade(cert_id: str, request: Request, db: Session = Depends(get_db)
 @app.post("/api/tsa/callback")
 def tsa_callback(payload: CallbackIn, db: Session = Depends(get_db)):
     provider = "tsa"
-    add_receipt(db, cert_id=payload.cert_id, provider=provider, status=payload.status, txid=payload.txid)
-    return JSONResponse({"ok": True, "provider": provider})
+    try:
+        add_receipt(
+            db,
+            cert_id=payload.cert_id,
+            provider=provider,
+            status=payload.status,
+            txid=payload.txid,
+        )
+        return JSONResponse({"ok": True, "provider": provider})
+    except Exception:
+        # 把详细错误直接返回给前端，便于排查
+        return HTMLResponse(f"<pre>{format_exc()}</pre>", status_code=500)
 
 
 @app.post("/api/chain/callback")
 def chain_callback(payload: CallbackIn, db: Session = Depends(get_db)):
     provider = "chain"
-    add_receipt(db, cert_id=payload.cert_id, provider=provider, status=payload.status, txid=payload.txid)
-    return JSONResponse({"ok": True, "provider": provider})
-
+    try:
+        add_receipt(
+            db,
+            cert_id=payload.cert_id,
+            provider=provider,
+            status=payload.status,
+            txid=payload.txid,
+        )
+        return JSONResponse({"ok": True, "provider": provider})
+    except Exception:
+        return HTMLResponse(f"<pre>{format_exc()}</pre>", status_code=500)
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
