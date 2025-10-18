@@ -153,3 +153,5 @@ app.include_router(upgrade25_router, prefix="/v1/upgrade25")
 
 
 CI coverage reporting enabled.
+
+CI verify run.
