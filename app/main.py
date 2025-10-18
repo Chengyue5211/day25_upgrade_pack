@@ -1,36 +1,77 @@
-
-import os
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Request, Depends
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+from traceback import format_exc
+from app.db import (
+    init_db, get_db, get_evidence,
+    add_receipt, get_last_receipts, get_last_status_txid,
+)
 
-from .upgrade25 import router as upgrade25_router
-from .db import get_evidence
+app = FastAPI(title="Verify Upgrade · Minimal")
+templates = Jinja2Templates(directory="app/templates")
 
-app = FastAPI(title="Upgrade 2.5 Demo")
-app.include_router(upgrade25_router, prefix="/v1/upgrade25")
+# 初始化 DB
+init_db()
 
-BASE_DIR = os.path.dirname(__file__)
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+
+class CallbackIn(BaseModel):
+    cert_id: str = Field(..., examples=["demo-cert"])
+    provider: str = Field(..., examples=["tsa", "chain"])
+    status: str = Field(..., examples=["success", "failed", "pending"])
+    txid: str | None = Field(None, examples=["0xabc123"])
+
 
 @app.get("/verify_upgrade/{cert_id}", response_class=HTMLResponse)
-def verify_upgrade(request: Request, cert_id: str):
-    ev = get_evidence(cert_id)
-   # —— load from DB (demo hook) ——
-try:
-    from app.hook_demo_save import query_cert_demo
-    db_row = query_cert_demo("demo-cert")   # 先用 demo-cert；有真实 cert_id 就替换掉
-    if isinstance(db_row, dict):
-        # 例：把 DB 的字段带进响应，便于在核验页显示
-        locals().update({
-            "db_title": db_row.get("title"),
-            "db_created_at": db_row.get("created_at"),
-            "db_verify_url": db_row.get("verify_url"),
-            "db_manifest_hash": db_row.get("manifest_hash"),
-        })
-except Exception as e:
-    print("query_certificate(hook) failed:", e)
-# —— end of hook ——
- return templates.TemplateResponse("verify_upgrade.html", {"request": request, "ev": ev, "cert_id": cert_id})
+def verify_upgrade(cert_id: str, request: Request, db: Session = Depends(get_db)):
+    evidence = get_evidence(db, cert_id)
+    last = get_last_status_txid(db, cert_id)
+    history = get_last_receipts(db, cert_id, limit=5)
+
+    context = {
+        "request": request,
+        "cert_id": cert_id,
+        "evidence": evidence,
+        "tsa_last_status": last.get("tsa_last_status"),
+        "tsa_last_txid": last.get("tsa_last_txid"),
+        "history": history,
+    }
+    return templates.TemplateResponse("verify_upgrade.html", context)
+
+
+@app.post("/api/tsa/callback")
+def tsa_callback(payload: CallbackIn, db: Session = Depends(get_db)):
+    provider = "tsa"
+    try:
+        add_receipt(
+            db,
+            cert_id=payload.cert_id,
+            provider=provider,
+            status=payload.status,
+            txid=payload.txid,
+        )
+        return JSONResponse({"ok": True, "provider": provider})
+    except Exception:
+        # 把详细错误直接返回给前端，便于排查
+        return HTMLResponse(f"<pre>{format_exc()}</pre>", status_code=500)
+
+
+@app.post("/api/chain/callback")
+def chain_callback(payload: CallbackIn, db: Session = Depends(get_db)):
+    provider = "chain"
+    try:
+        add_receipt(
+            db,
+            cert_id=payload.cert_id,
+            provider=provider,
+            status=payload.status,
+            txid=payload.txid,
+        )
+        return JSONResponse({"ok": True, "provider": provider})
+    except Exception:
+        return HTMLResponse(f"<pre>{format_exc()}</pre>", status_code=500)
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    return HTMLResponse("<h3>Verify Upgrade Backend</h3><p>Try: /verify_upgrade/demo-cert</p>")

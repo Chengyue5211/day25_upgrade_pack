@@ -1,69 +1,60 @@
-
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="zh-CN">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Verify · Upgrade 2.5</title>
+  <meta charset="UTF-8" />
+  <title>证据升级校验 · {{ cert_id }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 2rem; }
-    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; max-width: 900px; }
-    .row { display: flex; gap: 16px; flex-wrap: wrap; }
-    .pill { padding: 4px 10px; border-radius: 999px; font-size: 12px; display: inline-block; }
-    .ok { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
-    .warn { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
-    .muted { color: #6b7280; }
-    code { background: #f3f4f6; padding: 2px 5px; border-radius: 6px; }
-    .grid { display: grid; grid-template-columns: 180px 1fr; gap: 8px; }
-    .label { color: #6b7280; }
-    .value { color: #111827; }
-    h1 { margin: 0 0 8px 0; }
-    h2 { margin: 24px 0 8px 0; font-size: 18px; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei"; margin: 24px; }
+    .card { border: 1px solid #eee; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .muted { color: #666; }
+    code { background: #f6f6f6; padding: 2px 6px; border-radius: 6px; }
+    ul { padding-left: 18px; }
   </style>
 </head>
 <body>
+  <h2>核验 · Upgrade 2.5</h2>
   <div class="card">
-    <h1>核验 · Upgrade 2.5</h1>
-    <div class="muted">CERT_ID：<code>{{ cert_id }}</code></div>
+    <div><strong>CERT ID：</strong><code>{{ cert_id }}</code></div>
+  </div>
 
-    {% if ev %}
-      <h2>文件</h2>
-      <div class="grid">
-        <div class="label">路径</div><div class="value"><code>{{ ev.file_path }}</code></div>
-        <div class="label">SHA256</div><div class="value"><code>{{ ev.sha256 }}</code></div>
-      </div>
-
-      <h2>C2PA</h2>
-      {% if ev.c2pa_status == "signed" %}
-        <span class="pill ok">已写入</span>
-      {% else %}
-        <span class="pill warn">未签名</span>
-      {% endif %}
-      <div class="grid" style="margin-top:8px;">
-        <div class="label">输出文件</div><div class="value"><code>{{ ev.c2pa_out or "-" }}</code></div>
-        <div class="label">签名证书</div><div class="value">{{ ev.c2pa_signed_by or "-" }}</div>
-      </div>
-
-      <h2>TSA（RFC3161）</h2>
-      {% if ev.tsr_b64 %}
-        <span class="pill ok">已获得回执</span>
-      {% else %}
-        <span class="pill warn">未提交</span>
-      {% endif %}
-      <div class="grid" style="margin-top:8px;">
-        <div class="label">TSA URL</div><div class="value">{{ ev.tsa_url or "-" }}</div>
-        <div class="label">TSQ</div><div class="value">{% if ev.tsq_b64 %}<code>已存储</code>{% else %}-{% endif %}</div>
-        <div class="label">TSR</div><div class="value">{% if ev.tsr_b64 %}<code>已存储</code>{% else %}-{% endif %}</div>
-      </div>
-
-      <h2>链锚定（可选）</h2>
-      <div class="grid">
-        <div class="label">Sepolia 交易</div><div class="value">{{ ev.sepolia_txhash or "-" }}</div>
-      </div>
-
+  <div class="card">
+    <h3>最近回执</h3>
+    {% if tsa_last_status %}
+      <p>状态：<strong>{{ tsa_last_status }}</strong></p>
+      <p>TX：{% if tsa_last_txid %}<code>{{ tsa_last_txid }}</code>{% else %}<span class="muted">无</span>{% endif %}</p>
     {% else %}
-      <p class="muted">数据库尚无记录。请先调用 C2PA/TSA 接口。</p>
+      <p class="muted">暂无回执。请先调用 TSA/Chain 回执接口。</p>
     {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>回执历史（近 5 条）</h3>
+    {% if history and history|length > 0 %}
+      <ul>
+        {% for r in history %}
+          <li>
+            [{{ r.created_at.strftime("%Y-%m-%d %H:%M:%S") }}]
+            <strong>{{ r.provider }}</strong> · {{ r.status }}
+            {% if r.txid %} · TX: <code>{{ r.txid }}</code>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">暂无历史记录。</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>证据信息（示例字段）</h3>
+    <ul>
+      <li>文件：<code>{{ evidence.file_path }}</code></li>
+      <li>SHA-256：<code>{{ evidence.sha256 }}</code></li>
+      <li>C2PA Claim：<code>{{ evidence.c2pa_claim }}</code></li>
+      <li>TSA URL：<code>{{ evidence.tsa_url }}</code></li>
+      <li>Sepolia Tx：<code>{{ evidence.sepolia_txhash }}</code></li>
+    </ul>
+    <p class="muted">以上为示例位，可与实际入库字段对齐替换。</p>
   </div>
 </body>
 </html>
