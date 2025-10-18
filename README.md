@@ -151,3 +151,5 @@ app.include_router(upgrade25_router, prefix="/v1/upgrade25")
 
 > Update: add CI badge and minor doc tweaks.
 
+
+CI coverage reporting enabled.
