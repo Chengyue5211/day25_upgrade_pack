@@ -10,10 +10,20 @@
     .muted { color: #666; }
     code { background: #f6f6f6; padding: 2px 6px; border-radius: 6px; }
     ul { padding-left: 18px; }
+
+    /* 新增：provider 徽章 & 状态色 */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 12px; line-height: 18px; vertical-align: middle; border: 1px solid transparent; }
+    .badge-tsa { background: #e6f0ff; color: #1e40af; border-color: #bfdbfe; }     /* 蓝：tsa */
+    .badge-chain { background: #e8fff0; color: #166534; border-color: #bbf7d0; }   /* 绿：chain */
+
+    .status-success { color: #166534; font-weight: 600; }
+    .status-failed { color: #991b1b; font-weight: 600; }
+    .status-pending { color: #92400e; font-weight: 600; }
   </style>
 </head>
 <body>
   <h2>核验 · Upgrade 2.5</h2>
+
   <div class="card">
     <div><strong>CERT ID：</strong><code>{{ cert_id }}</code></div>
   </div>
@@ -21,7 +31,18 @@
   <div class="card">
     <h3>最近回执</h3>
     {% if tsa_last_status %}
-      <p>状态：<strong>{{ tsa_last_status }}</strong></p>
+      {% set last_provider = (history[0].provider if (history and history|length>0) else None) %}
+      <p>
+        来源：
+        {% if last_provider %}
+          <span class="badge {{ 'badge-tsa' if last_provider=='tsa' else 'badge-chain' }}">{{ last_provider }}</span>
+        {% else %}
+          <span class="muted">未知</span>
+        {% endif %}
+      </p>
+      <p>状态：
+        <span class="status-{{ tsa_last_status if tsa_last_status in ['success','failed','pending'] else 'pending' }}">{{ tsa_last_status }}</span>
+      </p>
       <p>TX：{% if tsa_last_txid %}<code>{{ tsa_last_txid }}</code>{% else %}<span class="muted">无</span>{% endif %}</p>
     {% else %}
       <p class="muted">暂无回执。请先调用 TSA/Chain 回执接口。</p>
@@ -35,7 +56,8 @@
         {% for r in history %}
           <li>
             [{{ r.created_at.strftime("%Y-%m-%d %H:%M:%S") }}]
-            <strong>{{ r.provider }}</strong> · {{ r.status }}
+            <span class="badge {{ 'badge-tsa' if r.provider=='tsa' else 'badge-chain' }}">{{ r.provider }}</span>
+            · <span class="status-{{ r.status if r.status in ['success','failed','pending'] else 'pending' }}">{{ r.status }}</span>
             {% if r.txid %} · TX: <code>{{ r.txid }}</code>{% endif %}
           </li>
         {% endfor %}
