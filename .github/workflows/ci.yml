@@ -5,7 +5,7 @@ on:
     branches: [ "main", "feat/**", "fix/**", "chore/**" ]
   pull_request:
     branches: [ "main" ]
- 
+
 jobs:
   basic-checks:
     runs-on: ubuntu-latest
@@ -25,27 +25,13 @@ jobs:
 
       - name: Quick import test
         run: |
-          python - << 'PY'
-          import importlib
-          for m in ["app", "app.main"]:
-              importlib.import_module(m)
-          print("imports ok")
-          PY
+          python -c "import importlib; [importlib.import_module(m) for m in ['app','app.main']]; print('imports ok')"
+
       - name: Run tests with coverage
         run: |
           coverage run -m pytest -q
           coverage xml
-          python - << 'PY'
-import xml.etree.ElementTree as ET
-p = "coverage.xml"
-try:
-    t = ET.parse(p).getroot()
-    rate = float(t.attrib.get("line-rate", "0")) * 100
-    print(f"Line coverage: {rate:.2f}%")
-except Exception as e:
-    print("Coverage parse failed:", e)
-PY
-
+          python -c "import xml.etree.ElementTree as ET; t=ET.parse('coverage.xml').getroot(); print(f'Line coverage: {float(t.attrib.get(\"line-rate\",0))*100:.2f}%')"
 
       - name: Ruff lint (non-blocking)
         run: ruff --version || true
