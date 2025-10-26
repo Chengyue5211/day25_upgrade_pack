@@ -1,4 +1,4 @@
-﻿name: CI
+﻿name: basic-checks
 
 on:
   push:
@@ -10,6 +10,9 @@ jobs:
   basic-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      DB_PATH: ./data/verify_upgrade.db
     steps:
       - uses: actions/checkout@v4
 
