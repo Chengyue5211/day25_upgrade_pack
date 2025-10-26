@@ -66,11 +66,21 @@ def _tsa_settings():
     return os.getenv("TSA_ENDPOINT"), os.getenv("TSA_API_KEY")
  
 # ---- DB funcs ----
-from app.db import (
-    init_db, get_db, get_evidence, get_last_status_txid,
-    get_last_receipts, get_latest_corpus,
-    add_corpus_item, search_corpus, latest_chain
-)
+# ---- DB imports（兼容老版本 db.py）----
+try:
+    from app.db import (
+        init_db, get_db, get_evidence, get_last_status_txid,
+        get_last_receipts, get_latest_corpus, add_corpus_item,
+        search_corpus, latest_chain
+    )
+except ImportError:
+    # 某些分支没有 get_latest_corpus；提供安全兜底
+    from app.db import (
+        init_db, get_db, get_evidence, get_last_status_txid,
+        get_last_receipts, add_corpus_item, search_corpus, latest_chain
+    )
+    def get_latest_corpus(db, owner_id: str = "default", limit: int = 3):
+        return []
 
 # ---- App & Templates (绝对路径) ----
 app = FastAPI(title='Verify Upgrade · Minimal - Recover')
