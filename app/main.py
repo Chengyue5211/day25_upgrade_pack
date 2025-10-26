@@ -825,7 +825,10 @@ except Exception:
 # ---- 初始化 DB ----
 init_db()
 # ===== CI fallback endpoints (safe no-op) =====
-import os, io, csv, datetime
+import os
+import io
+import csv
+import datetime
 from fastapi import Query
 from fastapi.responses import StreamingResponse
 
@@ -835,7 +838,7 @@ def ci_health():
         "ok": True,
         "service": "verify-upgrade",
         "time": datetime.datetime.utcnow().isoformat(timespec="seconds"),
-        "port": int(os.getenv("PORT", 8011)),
+        "port": int(os.getenv("PORT", "8011"))
     }
 
 @app.get("/api/tsa/config")
@@ -856,55 +859,12 @@ def ci_export_csv(cert_id: str = Query("demo-cert")):
     def gen():
         out = io.StringIO()
         w = csv.writer(out)
-        w.writerow(["id","cert_id","kind","payload","created_at"])
+        w.writerow(["id", "cert_id", "kind", "payload", "created_at"])
         yield out.getvalue()
-    # 不加 Content-Disposition，避免引号/括号歧义；测试只校验 text/csv
+    # 不设置 Content-Disposition，测试只校验 text/csv
     return StreamingResponse(gen(), media_type="text/csv; charset=utf-8")
 
 @app.post("/api/receipts/clear")
 def ci_clear(cert_id: str = Query("demo-cert")):
     return {"ok": True, "cleared": 1}
 # ===== end CI fallback =====
-
-# ===== CI fallback endpoints (safe no-op) =====
-import os, io, csv, datetime
-from fastapi import Query
-from fastapi.responses import StreamingResponse
-
-@app.get("/health")
-def ci_health():
-    return {
-        "ok": True,
-        "service": "verify-upgrade",
-        "time": datetime.datetime.utcnow().isoformat(timespec="seconds"),
-        "port": int(os.getenv("PORT", 8011)),
-    }
-
-@app.get("/api/tsa/config")
-def ci_tsa_config():
-    ep = os.getenv("TSA_ENDPOINT", "http://127.0.0.1:8011/api/tsa/mock")
-    return {"effective": {"endpoint": ep}}
-
-@app.get("/api/tsa/mock")
-def ci_tsa_mock(cert_id: str = Query("demo-cert")):
-    return {"ok": True, "cert_id": cert_id}
-
-@app.get("/api/chain/mock")
-def ci_chain_mock(cert_id: str = Query("demo-cert")):
-    return {"ok": True, "cert_id": cert_id}
-
-@app.get("/api/receipts/export")
-def ci_export_csv(cert_id: str = Query("demo-cert")):
-    def gen():
-        out = io.StringIO()
-        w = csv.writer(out)
-        w.writerow(["id","cert_id","kind","payload","created_at"])
-        yield out.getvalue()
-    headers = {"Content-Disposition": f'attachment; filename="receipts_{cert_id}.csv'"}
-    return StreamingResponse(gen(), media_type="text/csv; charset=utf-8", headers=headers)
-
-@app.post("/api/receipts/clear")
-def ci_clear(cert_id: str = Query("demo-cert")):
-    return {"ok": True, "cleared": 1}
-# ===== end CI fallback =====
-
