@@ -1,5 +1,15 @@
+# 强制从仓库文件路径加载 app，避免 CI 环境导到别的同名包导致 404
+import pathlib, importlib.util
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+MAIN_PY = ROOT / "app" / "main.py"
+
+spec = importlib.util.spec_from_file_location("app_main", MAIN_PY)
+mod  = importlib.util.module_from_spec(spec)
+assert spec and spec.loader, f"Cannot load {MAIN_PY}"
+spec.loader.exec_module(mod)   # 执行 app/main.py
+app = mod.app                  # 取出 FastAPI 实例
+
 from fastapi.testclient import TestClient
-from app.main import app
 client = TestClient(app)
 
 def test_health_ok():
