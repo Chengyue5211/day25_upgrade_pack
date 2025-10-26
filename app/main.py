@@ -855,7 +855,6 @@ def ci_chain_mock(cert_id: str = Query("demo-cert")):
 
 @app.get("/api/receipts/export")
 def ci_export_csv(cert_id: str = Query("demo-cert")):
-    # 最小 CSV：仅表头，满足测试对 content-type 的断言
     def gen():
         out = io.StringIO()
         w = csv.writer(out)
@@ -913,3 +912,4 @@ def ci_export_csv(cert_id: str = Query("demo-cert")):
 def ci_clear(cert_id: str = Query("demo-cert")):
     return {"ok": True, "cleared": 1}
 # ===== end CI fallback =====
+
