@@ -824,6 +824,7 @@ except Exception:
 
 # ---- 初始化 DB ----
 init_db()
+
 # ===== CI fallback endpoints (safe no-op) =====
 import os, io, csv, datetime
 from fastapi import Query
@@ -856,7 +857,7 @@ def ci_export_csv(cert_id: str = Query("demo-cert")):
     def gen():
         out = io.StringIO()
         w = csv.writer(out)
-        w.writerow(["id", "cert_id", "kind", "payload", "created_at"])
+        w.writerow(["id","cert_id","kind","payload","created_at"])
         yield out.getvalue()
     # 不设 Content-Disposition，测试只校验 text/csv
     return StreamingResponse(gen(), media_type="text/csv; charset=utf-8")
@@ -865,3 +866,4 @@ def ci_export_csv(cert_id: str = Query("demo-cert")):
 def ci_clear(cert_id: str = Query("demo-cert")):
     return {"ok": True, "cleared": 1}
 # ===== end CI fallback =====
+
