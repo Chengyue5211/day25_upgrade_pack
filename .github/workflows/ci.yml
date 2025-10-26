@@ -1,43 +1,45 @@
 ﻿name: basic-checks
 
 on:
-  push:
-    branches: [ "main", "feat/**", "fix/**", "chore/**" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ main ]
 
 jobs:
-  basic-checks:
+  checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       PYTHONPATH: ${{ github.workspace }}
       DB_PATH: ./data/verify_upgrade.db
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install uvicorn[standard] fastapi jinja2 sqlalchemy
-          pip install pytest coverage httpx
+          pip install fastapi uvicorn "sqlalchemy>=2" httpx pytest python-dotenv jinja2
+
+      - name: Prepare env
+        run: |
+          echo "PYTHONPATH=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+          echo "DB_PATH=./data/verify_upgrade.db" >> $GITHUB_ENV
+          mkdir -p app/data
 
       - name: Quick import test
         run: |
-          python -c "import importlib; [importlib.import_module(m) for m in ['app','app.main']]; print('imports ok')"
+          python - <<'PY'
+          import importlib
+          for m in ['app','app.main']:
+              importlib.import_module(m)
+          print('imports ok')
+          PY
 
-      - name: Run tests with coverage
-        run: |
-          coverage run -m pytest -q
-          coverage xml
-          python -c "import xml.etree.ElementTree as ET; t=ET.parse('coverage.xml').getroot(); print(f'Line coverage: {float(t.attrib.get(\"line-rate\",0))*100:.2f}%')"
-
-      - name: Ruff lint (non-blocking)
-        run: ruff --version || true
-
-      - name: Mypy type-check (non-blocking)
-        run: mypy --version || true
+      - name: Run tests
+        run: pytest -q
