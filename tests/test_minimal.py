@@ -11,6 +11,10 @@ app = mod.app                  # 取出 FastAPI 实例
 
 from fastapi.testclient import TestClient
 client = TestClient(app)
+    # 调试：打印当前 app 的路由表
+    paths = [getattr(r, "path", None) for r in app.routes]
+    print("ROUTES:", paths)
+    assert "/health" in paths, f"routes missing /health: {paths}"
 
 def test_health_ok():
     r = client.get("/health")
@@ -24,7 +28,6 @@ def test_health_ok():
         ("db" in j and str(j["db"].get("db")).lower() in ("ok", "true"))
         or ("service" in j)
     )
-
 
 def test_tsa_config():
     assert client.get("/api/tsa/config").status_code == 200
