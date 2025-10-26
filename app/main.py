@@ -825,10 +825,7 @@ except Exception:
 # ---- 初始化 DB ----
 init_db()
 # ===== CI fallback endpoints (safe no-op) =====
-import os
-import io
-import csv
-import datetime
+import os, io, csv, datetime
 from fastapi import Query
 from fastapi.responses import StreamingResponse
 
@@ -861,7 +858,7 @@ def ci_export_csv(cert_id: str = Query("demo-cert")):
         w = csv.writer(out)
         w.writerow(["id", "cert_id", "kind", "payload", "created_at"])
         yield out.getvalue()
-    # 不设置 Content-Disposition，测试只校验 text/csv
+    # 不设 Content-Disposition，测试只校验 text/csv
     return StreamingResponse(gen(), media_type="text/csv; charset=utf-8")
 
 @app.post("/api/receipts/clear")
