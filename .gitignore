@@ -3,14 +3,23 @@
 Thumbs.db
 *.log
 *.tmp
-~$*
+*~
 *.swp
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
 .env
+.pytest_cache/
+.mypy_cache/
+
+# Local DB / artifacts
+*.sqlite*
+data.db
+/data/verify_upgrade.db
+
+# Build / Dist
 dist/
 build/
 
