@@ -1,5 +1,5 @@
 ﻿# -*- coding: utf-8 -*-
-from datetime import datetime
+import datetime
 from pathlib import Path
 from starlette.responses import PlainTextResponse
 from fastapi import FastAPI, Request, Depends, Query
@@ -30,6 +30,9 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text  # 用原生 SQL 插入，避免依赖你内部 ORM 细节
 from pydantic import BaseModel
+
+BASE_DIR = Path(__file__).resolve().parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # ---- helpers：生成 txid + 追加历史记录 ----
 def _gen_txid(prefix: str = "0x") -> str:
     return prefix + secrets.token_hex(12)
@@ -131,18 +134,21 @@ def ci_health():
         "time": datetime.datetime.utcnow().isoformat(timespec="seconds"),
         "port": int(os.getenv("PORT", "8011"))
     }
-@app.get("/verify_upgrade/{cert_id}")
-def verify_upgrade_page(cert_id: str):
-    html = f"""<!doctype html>
-<html><head>
-  <meta charset="utf-8">
-  <title>Verify Upgrade - {cert_id}</title>
-</head>
-<body>
-  <h1>Verify Upgrade</h1>
-  <p id="cert">{cert_id}</p>
-</body></html>"""
-    return HTMLResponse(html)
+ 
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+
+@app.get("/verify_upgrade/{cert_id}", response_class=HTMLResponse)
+def verify_upgrade_page(cert_id: str, request: Request):
+    ctx = {
+        "request": request,
+        "cert_id": cert_id,
+        "tsa_last_status": None,
+        "tsa_last_txid": None,
+        "history": [],
+        "evidence": {},   # 关键兜底
+    }
+    return templates.TemplateResponse("verify_upgrade.html", ctx)
 
 @app.get("/api/tsa/config")
 def ci_tsa_config():
