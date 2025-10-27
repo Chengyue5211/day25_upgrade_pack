@@ -135,12 +135,20 @@ def ci_health():
         "port": int(os.getenv("PORT", "8011"))
     }
  
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+
 @app.get("/verify_upgrade/{cert_id}", response_class=HTMLResponse)
 def verify_upgrade_page(cert_id: str, request: Request):
-    return templates.TemplateResponse(
-        "verify_upgrade.html",
-        {"request": request, "cert_id": cert_id}
-    )
+    ctx = {
+        "request": request,
+        "cert_id": cert_id,
+        "tsa_last_status": None,
+        "tsa_last_txid": None,
+        "history": [],
+        "evidence": {},   # 关键兜底
+    }
+    return templates.TemplateResponse("verify_upgrade.html", ctx)
 
 @app.get("/api/tsa/config")
 def ci_tsa_config():
