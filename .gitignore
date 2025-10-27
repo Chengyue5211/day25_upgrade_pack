@@ -27,3 +27,12 @@ build/
 
 # VSCode
 .vscode/
+
+__pycache__/
+*.pyc
+*.bak
+*.backup.*
+*.html.html
+start_server*.bat
+stop_server*.bat
+app/config.json
