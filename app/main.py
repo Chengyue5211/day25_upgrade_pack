@@ -140,18 +140,85 @@ from fastapi.responses import HTMLResponse
 
 @app.get("/verify_upgrade/{cert_id}", response_class=HTMLResponse)
 def verify_upgrade_page(cert_id: str, request: Request):
+    """
+    页面数据来源：
+      - 最近状态：get_last_status_txid(db, cert_id) -> {"tsa_last_status","tsa_last_txid",...}
+      - 回执历史：get_last_receipts(db, cert_id, limit=5) -> [ {provider,status,txid,created_at}, ... ]
+      - 证据信息：get_evidence(db, cert_id) -> dict/obj
+    任一接口异常/无数据时，回落到安全默认值；模板不会报错。
+    """
+    # 默认上下文（兜底）
     ctx = {
         "request": request,
         "cert_id": cert_id,
         "tsa_last_status": None,
         "tsa_last_txid": None,
-        "history": [],     # 兜底：列表
-        "evidence": {},    # 兜底：字典
+        "history": [],
+        "evidence": {},
     }
-    return templates.TemplateResponse("verify_upgrade.html", ctx)
-    # 如要消掉警告，也可以用：
-    # return templates.TemplateResponse(request, "verify_upgrade.html", ctx)
 
+    # 读取 DB（已有 get_db / * 函数的 CI 兜底，不会硬挂）
+    try:
+        with get_db() as db:
+            # 最近状态
+            try:
+                st = get_last_status_txid(db, cert_id) or {}
+                # 有些实现返回 dict，有些返回对象；都兼容
+                ctx["tsa_last_status"] = (st.get("tsa_last_status")
+                                          if isinstance(st, dict) else getattr(st, "tsa_last_status", None))
+                ctx["tsa_last_txid"]   = (st.get("tsa_last_txid")
+                                          if isinstance(st, dict) else getattr(st, "tsa_last_txid", None))
+            except Exception:
+                pass
+
+            # 回执历史（近 5 条）
+            try:
+                raw_hist = get_last_receipts(db, cert_id, limit=5) or []
+                safe_hist = []
+                for r in raw_hist:
+                    if isinstance(r, dict):
+                        item = {
+                            "provider": r.get("provider"),
+                            "status":   r.get("status"),
+                            "txid":     r.get("txid"),
+                            "created_at": r.get("created_at"),
+                        }
+                    else:
+                        item = {
+                            "provider": getattr(r, "provider", None),
+                            "status":   getattr(r, "status",   None),
+                            "txid":     getattr(r, "txid",     None),
+                            "created_at": getattr(r, "created_at", None),
+                        }
+                    safe_hist.append(item)
+                ctx["history"] = safe_hist
+            except Exception:
+                pass
+
+            # 证据信息
+            try:
+                ev = get_evidence(db, cert_id) or {}
+                if not isinstance(ev, dict):
+                    ev = {
+                        # 字段名按你库里的来：先做容错映射
+                        "file_path":       getattr(ev, "file_path", None),
+                        "sha256":          getattr(ev, "sha256", None),
+                        "c2pa_claim":      getattr(ev, "c2pa_claim", None),
+                        "tsa_url":         getattr(ev, "tsa_url", None),
+                        "sepolia_txhash":  getattr(ev, "sepolia_txhash", None),
+                        # 常用元数据兼容位
+                        "title":           getattr(ev, "title", None),
+                        "owner":           getattr(ev, "owner", None),
+                        "created_at":      getattr(ev, "created_at", None),
+                    }
+                ctx["evidence"] = ev
+            except Exception:
+                pass
+    except Exception:
+        # get_db 不可用时，使用默认 ctx
+        pass
+
+    return templates.TemplateResponse("verify_upgrade.html", ctx)
 @app.get("/api/tsa/config")
 def ci_tsa_config():
     ep = os.getenv("TSA_ENDPOINT", "http://127.0.0.1:8011/api/tsa/mock")
@@ -178,5 +245,4 @@ def ci_export_csv(cert_id: str = Query("demo-cert")):
 def ci_clear(cert_id: str = Query("demo-cert")):
     return {"ok": True, "cleared": 1}
 # ===== end CI fallback =====
-
 
