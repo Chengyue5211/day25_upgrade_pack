@@ -36,3 +36,7 @@ __pycache__/
 start_server*.bat
 stop_server*.bat
 app/config.json
+
+__pycache__/
+*.pyc
+
