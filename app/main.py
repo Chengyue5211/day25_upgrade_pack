@@ -108,8 +108,6 @@ except Exception:
     def search_corpus(db, q: str, limit: int = 10, offset: int = 0) -> List[Dict]:
         return []
 
-try:
-
 # ===== CI fallback endpoints (safe no-op) =====
 import os, io, csv, datetime
 from fastapi import Query
