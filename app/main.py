@@ -113,6 +113,14 @@ import os, io, csv, datetime
 from fastapi import Query
 from fastapi.responses import StreamingResponse
 
+# —— ensure app exists for CI fallback ——
+try:
+    app  # noqa: F821
+except NameError:
+    from fastapi import FastAPI
+    app = FastAPI(title="verify-upgrade (CI)")
+# —— end ensure ——
+
 @app.get("/health")
 def ci_health():
     return {
