@@ -34,4 +34,19 @@ def test_tsa_config_env_override(monkeypatch):
     assert r.status_code == 200
     data = r.json()
     assert data["effective"]["endpoint"] == "http://test.local/api/tsa/mock"
+def test_receipts_export_and_clear(monkeypatch):
+    # 写入两条
+    client.get("/api/tsa/mock?cert_id=demo-cert")
+    client.get("/api/chain/mock?cert_id=demo-cert")
+
+    # 导出 CSV
+    r = client.get("/api/receipts/export?cert_id=demo-cert")
+    assert r.status_code == 200
+    assert "text/csv" in r.headers.get("content-type","")
+    assert "Content-Disposition" in r.headers
+
+    # 清空
+    j = client.post("/api/receipts/clear?cert_id=demo-cert").json()
+    assert j.get("ok") and j.get("cleared",0) >= 1
+
 
