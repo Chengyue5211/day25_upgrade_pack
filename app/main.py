@@ -145,10 +145,12 @@ def verify_upgrade_page(cert_id: str, request: Request):
         "cert_id": cert_id,
         "tsa_last_status": None,
         "tsa_last_txid": None,
-        "history": [],
-        "evidence": {},   # 关键兜底
+        "history": [],     # 兜底：列表
+        "evidence": {},    # 兜底：字典
     }
     return templates.TemplateResponse("verify_upgrade.html", ctx)
+    # 如要消掉警告，也可以用：
+    # return templates.TemplateResponse(request, "verify_upgrade.html", ctx)
 
 @app.get("/api/tsa/config")
 def ci_tsa_config():
