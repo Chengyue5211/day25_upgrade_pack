@@ -3,16 +3,36 @@
 Thumbs.db
 *.log
 *.tmp
-~$*
+*~
 *.swp
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
 .env
+.pytest_cache/
+.mypy_cache/
+
+# Local DB / artifacts
+*.sqlite*
+data.db
+/data/verify_upgrade.db
+*.zip
+*.zip.zip
+
+# Build / Dist
 dist/
 build/
 
 # VSCode
 .vscode/
+
+__pycache__/
+*.pyc
+*.bak
+*.backup.*
+*.html.html
+start_server*.bat
+stop_server*.bat
+app/config.json
