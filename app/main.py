@@ -1,14 +1,16 @@
 ﻿# -*- coding: utf-8 -*-
 import datetime
 from pathlib import Path
-from starlette.responses import PlainTextResponse
+
 from fastapi import FastAPI, Request, Depends, Query
-import io, csv
-import secrets
-import os, hashlib
+from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
+
+import io, csv, secrets
+import os, hashlib, sqlite3
 import httpx
 import json
 import time
+
 # --- make error message UTF-8 safe ---
 def _safe_err(e: Exception) -> str:
     try:
@@ -134,20 +136,13 @@ def ci_health():
         "time": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "port": int(os.getenv("PORT", "8011"))
     }
- 
-from fastapi import Request
-from fastapi.responses import HTMLResponse
 
 @app.get("/verify_upgrade/{cert_id}", response_class=HTMLResponse)
 def verify_upgrade_page(cert_id: str, request: Request):
     """
-    页面数据来源：
-      - 最近状态：get_last_status_txid(db, cert_id) -> {"tsa_last_status","tsa_last_txid",...}
-      - 回执历史：get_last_receipts(db, cert_id, limit=5) -> [ {provider,status,txid,created_at}, ... ]
-      - 证据信息：get_evidence(db, cert_id) -> dict/obj
-    任一接口异常/无数据时，回落到安全默认值；模板不会报错。
+    优先从本地 SQLite (data/verify_upgrade.db) 读取；
+    若不存在或失败，则回退到 get_* 函数；所有分支都有兜底。
     """
-    # 默认上下文（兜底）
     ctx = {
         "request": request,
         "cert_id": cert_id,
@@ -157,68 +152,123 @@ def verify_upgrade_page(cert_id: str, request: Request):
         "evidence": {},
     }
 
-    # 读取 DB（已有 get_db / * 函数的 CI 兜底，不会硬挂）
-    try:
-        with get_db() as db:
-            # 最近状态
+    # A) 本地 SQLite 优先
+    db_path = os.path.join("data", "verify_upgrade.db")
+    if os.path.exists(db_path):
+        try:
+            conn = sqlite3.connect(db_path)
             try:
-                st = get_last_status_txid(db, cert_id) or {}
-                # 有些实现返回 dict，有些返回对象；都兼容
-                ctx["tsa_last_status"] = (st.get("tsa_last_status")
-                                          if isinstance(st, dict) else getattr(st, "tsa_last_status", None))
-                ctx["tsa_last_txid"]   = (st.get("tsa_last_txid")
-                                          if isinstance(st, dict) else getattr(st, "tsa_last_txid", None))
-            except Exception:
-                pass
+                # receipts：最近与历史
+                cur = conn.execute(
+                    "SELECT provider,status,txid,created_at "
+                    "FROM receipts WHERE cert_id=? ORDER BY id DESC LIMIT 5",
+                    (cert_id,)
+                )
+                rows = cur.fetchall() or []
+                if rows:
+                    last = rows[0]
+                    ctx["tsa_last_status"] = last[1]
+                    ctx["tsa_last_txid"] = last[2]
 
-            # 回执历史（近 5 条）
-            try:
-                raw_hist = get_last_receipts(db, cert_id, limit=5) or []
+                # 统一把 created_at 转成字符串，模板不再调用 strftime()
                 safe_hist = []
-                for r in raw_hist:
-                    if isinstance(r, dict):
-                        item = {
-                            "provider": r.get("provider"),
-                            "status":   r.get("status"),
-                            "txid":     r.get("txid"),
-                            "created_at": r.get("created_at"),
-                        }
-                    else:
-                        item = {
-                            "provider": getattr(r, "provider", None),
-                            "status":   getattr(r, "status",   None),
-                            "txid":     getattr(r, "txid",     None),
-                            "created_at": getattr(r, "created_at", None),
-                        }
-                    safe_hist.append(item)
-                ctx["history"] = safe_hist
-            except Exception:
-                pass
+                for r in rows:
+                    raw = r[3]  # 可能是字符串或 None
+                    nice = str(raw) if raw is not None else None
+                    try:
+                        nice = datetime.datetime.fromisoformat(str(raw)).strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        pass
+                    safe_hist.append({
+                        "provider": r[0],
+                        "status":   r[1],
+                        "txid":     r[2],
+                        "created_at": nice,
+                    })
+                if safe_hist:
+                    ctx["history"] = safe_hist
 
-            # 证据信息
-            try:
-                ev = get_evidence(db, cert_id) or {}
-                if not isinstance(ev, dict):
-                    ev = {
-                        # 字段名按你库里的来：先做容错映射
-                        "file_path":       getattr(ev, "file_path", None),
-                        "sha256":          getattr(ev, "sha256", None),
-                        "c2pa_claim":      getattr(ev, "c2pa_claim", None),
-                        "tsa_url":         getattr(ev, "tsa_url", None),
-                        "sepolia_txhash":  getattr(ev, "sepolia_txhash", None),
-                        # 常用元数据兼容位
-                        "title":           getattr(ev, "title", None),
-                        "owner":           getattr(ev, "owner", None),
-                        "created_at":      getattr(ev, "created_at", None),
+                # evidence
+                cur = conn.execute(
+                    "SELECT file_path,sha256,c2pa_claim,tsa_url,sepolia_txhash,title,owner,created_at "
+                    "FROM evidence WHERE cert_id=? LIMIT 1",
+                    (cert_id,)
+                )
+                ev = cur.fetchone()
+                if ev:
+                    ctx["evidence"] = {
+                        "file_path": ev[0],
+                        "sha256": ev[1],
+                        "c2pa_claim": ev[2],
+                        "tsa_url": ev[3],
+                        "sepolia_txhash": ev[4],
+                        "title": ev[5],
+                        "owner": ev[6],
+                        "created_at": ev[7],
                     }
-                ctx["evidence"] = ev
-            except Exception:
-                pass
-    except Exception:
-        # get_db 不可用时，使用默认 ctx
-        pass
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    # B) 本地没读到再回退到 get_* 实现
+    if not ctx["history"] and ctx["tsa_last_status"] is None:
+        try:
+            with get_db() as db:
+                try:
+                    st = get_last_status_txid(db, cert_id) or {}
+                    ctx["tsa_last_status"] = (st.get("tsa_last_status")
+                                              if isinstance(st, dict) else getattr(st, "tsa_last_status", None))
+                    ctx["tsa_last_txid"]   = (st.get("tsa_last_txid")
+                                              if isinstance(st, dict) else getattr(st, "tsa_last_txid", None))
+                except Exception:
+                    pass
+
+                try:
+                    raw_hist = get_last_receipts(db, cert_id, limit=5) or []
+                    safe = []
+                    for r in raw_hist:
+                        if isinstance(r, dict):
+                            safe.append({
+                                "provider": r.get("provider"),
+                                "status":   r.get("status"),
+                                "txid":     r.get("txid"),
+                                "created_at": r.get("created_at"),
+                            })
+                        else:
+                            safe.append({
+                                "provider": getattr(r, "provider", None),
+                                "status":   getattr(r, "status", None),
+                                "txid":     getattr(r, "txid", None),
+                                "created_at": getattr(r, "created_at", None),
+                            })
+                    if safe:
+                        ctx["history"] = safe
+                except Exception:
+                    pass
+
+                try:
+                    ev = get_evidence(db, cert_id) or {}
+                    if not isinstance(ev, dict):
+                        ev = {
+                            "file_path": getattr(ev, "file_path", None),
+                            "sha256": getattr(ev, "sha256", None),
+                            "c2pa_claim": getattr(ev, "c2pa_claim", None),
+                            "tsa_url": getattr(ev, "tsa_url", None),
+                            "sepolia_txhash": getattr(ev, "sepolia_txhash", None),
+                            "title": getattr(ev, "title", None),
+                            "owner": getattr(ev, "owner", None),
+                            "created_at": getattr(ev, "created_at", None),
+                        }
+                    if ev:
+                        ctx["evidence"] = ev
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     return templates.TemplateResponse("verify_upgrade.html", ctx)
+
 @app.get("/api/tsa/config")
 def ci_tsa_config():
     ep = os.getenv("TSA_ENDPOINT", "http://127.0.0.1:8011/api/tsa/mock")
