@@ -67,12 +67,14 @@ def _tsa_settings():
  
 # ---- DB funcs ----
 # ---- DB imports（兼容老版本 db.py）----
-try:
-    # ==== DB imports with fallbacks for CI ====
+
+# ==== DB imports with fallbacks for CI ====
 from typing import List, Dict, Optional
 try:
     from app.db import (
-        init_db, get_db, get_evidence, get_last_status_txid, get_last_receipts
+        init_db, get_db, get_evidence, get_last_status_txid,
+        get_last_receipts, get_latest_corpus,
+        add_corpus_item, search_corpus, latest_chain
     )
 except Exception:
     def init_db() -> None: 
