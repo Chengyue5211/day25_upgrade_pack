@@ -112,6 +112,8 @@ except Exception:
 import os, io, csv, datetime
 from fastapi import Query
 from fastapi.responses import StreamingResponse
+from fastapi import Request
+from fastapi.responses import HTMLResponse
 
 # —— ensure app exists for CI fallback ——
 try:
@@ -129,6 +131,18 @@ def ci_health():
         "time": datetime.datetime.utcnow().isoformat(timespec="seconds"),
         "port": int(os.getenv("PORT", "8011"))
     }
+@app.get("/verify_upgrade/{cert_id}")
+def verify_upgrade_page(cert_id: str):
+    html = f"""<!doctype html>
+<html><head>
+  <meta charset="utf-8">
+  <title>Verify Upgrade - {cert_id}</title>
+</head>
+<body>
+  <h1>Verify Upgrade</h1>
+  <p id="cert">{cert_id}</p>
+</body></html>"""
+    return HTMLResponse(html)
 
 @app.get("/api/tsa/config")
 def ci_tsa_config():
