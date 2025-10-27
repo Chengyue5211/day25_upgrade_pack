@@ -1,16 +1,15 @@
 ﻿# -*- coding: utf-8 -*-
 import datetime
 from pathlib import Path
-
+from starlette.responses import PlainTextResponse
 from fastapi import FastAPI, Request, Depends, Query
-from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
-
-import io, csv, secrets
-import os, hashlib, sqlite3
+import io, csv
+import secrets
+import os, hashlib
 import httpx
 import json
 import time
-
+import os, sqlite3
 # --- make error message UTF-8 safe ---
 def _safe_err(e: Exception) -> str:
     try:
@@ -136,6 +135,10 @@ def ci_health():
         "time": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "port": int(os.getenv("PORT", "8011"))
     }
+ 
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+import os, sqlite3
 
 @app.get("/verify_upgrade/{cert_id}", response_class=HTMLResponse)
 def verify_upgrade_page(cert_id: str, request: Request):
@@ -169,25 +172,10 @@ def verify_upgrade_page(cert_id: str, request: Request):
                     last = rows[0]
                     ctx["tsa_last_status"] = last[1]
                     ctx["tsa_last_txid"] = last[2]
-
-                # 统一把 created_at 转成字符串，模板不再调用 strftime()
-                safe_hist = []
-                for r in rows:
-                    raw = r[3]  # 可能是字符串或 None
-                    nice = str(raw) if raw is not None else None
-                    try:
-                        nice = datetime.datetime.fromisoformat(str(raw)).strftime("%Y-%m-%d %H:%M:%S")
-                    except Exception:
-                        pass
-                    safe_hist.append({
-                        "provider": r[0],
-                        "status":   r[1],
-                        "txid":     r[2],
-                        "created_at": nice,
-                    })
-                if safe_hist:
-                    ctx["history"] = safe_hist
-
+                    ctx["history"] = [
+                        {"provider": r[0], "status": r[1], "txid": r[2], "created_at": r[3]}
+                        for r in rows
+                    ]
                 # evidence
                 cur = conn.execute(
                     "SELECT file_path,sha256,c2pa_claim,tsa_url,sepolia_txhash,title,owner,created_at "
@@ -197,14 +185,9 @@ def verify_upgrade_page(cert_id: str, request: Request):
                 ev = cur.fetchone()
                 if ev:
                     ctx["evidence"] = {
-                        "file_path": ev[0],
-                        "sha256": ev[1],
-                        "c2pa_claim": ev[2],
-                        "tsa_url": ev[3],
-                        "sepolia_txhash": ev[4],
-                        "title": ev[5],
-                        "owner": ev[6],
-                        "created_at": ev[7],
+                        "file_path": ev[0], "sha256": ev[1], "c2pa_claim": ev[2],
+                        "tsa_url": ev[3], "sepolia_txhash": ev[4],
+                        "title": ev[5], "owner": ev[6], "created_at": ev[7],
                     }
             finally:
                 conn.close()
@@ -223,7 +206,6 @@ def verify_upgrade_page(cert_id: str, request: Request):
                                               if isinstance(st, dict) else getattr(st, "tsa_last_txid", None))
                 except Exception:
                     pass
-
                 try:
                     raw_hist = get_last_receipts(db, cert_id, limit=5) or []
                     safe = []
@@ -246,7 +228,6 @@ def verify_upgrade_page(cert_id: str, request: Request):
                         ctx["history"] = safe
                 except Exception:
                     pass
-
                 try:
                     ev = get_evidence(db, cert_id) or {}
                     if not isinstance(ev, dict):
@@ -267,7 +248,7 @@ def verify_upgrade_page(cert_id: str, request: Request):
         except Exception:
             pass
 
-    return templates.TemplateResponse("verify_upgrade.html", ctx)
+    return templates.TemplateResponse(request, "verify_upgrade.html", ctx)
 
 @app.get("/api/tsa/config")
 def ci_tsa_config():
@@ -284,12 +265,65 @@ def ci_chain_mock(cert_id: str = Query("demo-cert")):
 
 @app.get("/api/receipts/export")
 def ci_export_csv(cert_id: str = Query("demo-cert")):
-    def gen():
+    def gen_rows():
+        # 先尝试本地 SQLite
+        db_path = os.path.join("data", "verify_upgrade.db")
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path)
+                try:
+                    cur = conn.execute(
+                        "SELECT id, cert_id, provider, status || '|' || IFNULL(txid,''), created_at "
+                        "FROM receipts WHERE cert_id=? ORDER BY id ASC",
+                        (cert_id,)
+                    )
+                    return cur.fetchall() or []
+                finally:
+                    conn.close()
+            except Exception:
+                pass
+
+        # 再尝试 get_db（例如 SQLAlchemy）
+        try:
+            with get_db() as db:
+                if db is not None:
+                    try:
+                        cur = db.execute(text(
+                            "SELECT id, cert_id, provider, (status || '|' || COALESCE(txid,'')) AS payload, created_at "
+                            "FROM receipts WHERE cert_id=:cid ORDER BY id ASC"
+                        ), {"cid": cert_id})
+                        return list(cur.fetchall())
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # 最后用内存兜底
+        mem = getattr(app.state, "receipts", {}).get(cert_id, [])
+        rows = []
+        for i, r in enumerate(mem, 1):
+            rows.append((
+                i, cert_id, r.get("provider"),
+                f"{r.get('status')}|{r.get('txid','')}",
+                r.get("time"),
+            ))
+        return rows
+
+    def stream():
         out = io.StringIO()
         w = csv.writer(out)
-        w.writerow(["id","cert_id","kind","payload","created_at"])
-        yield out.getvalue()
-    return StreamingResponse(gen(), media_type="text/csv; charset=utf-8")
+        w.writerow(["id", "cert_id", "provider", "payload", "created_at"])
+        yield out.getvalue(); out.seek(0); out.truncate(0)
+        for row in gen_rows():
+            w.writerow(list(row))
+            yield out.getvalue(); out.seek(0); out.truncate(0)
+
+    filename = f"receipts_{cert_id}.csv"
+    return StreamingResponse(
+        stream(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 @app.post("/api/receipts/clear")
 def ci_clear(cert_id: str = Query("demo-cert")):
