@@ -27,3 +27,11 @@ def test_export_and_clear():
     assert r.status_code==200 and "text/csv" in r.headers.get("content-type","")
     j = client.post(f"/api/receipts/clear?cert_id={cert}").json()
     assert j.get("ok") and j.get("cleared",0)>=1
+def test_tsa_config_env_override(monkeypatch):
+    # 覆盖环境变量，接口应读取到它
+    monkeypatch.setenv("TSA_ENDPOINT", "http://test.local/api/tsa/mock")
+    r = client.get("/api/tsa/config")  # 用上面的全局 client
+    assert r.status_code == 200
+    data = r.json()
+    assert data["effective"]["endpoint"] == "http://test.local/api/tsa/mock"
+
