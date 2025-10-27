@@ -131,7 +131,7 @@ def ci_health():
     return {
         "ok": True,
         "service": "verify-upgrade",
-        "time": datetime.datetime.utcnow().isoformat(timespec="seconds"),
+        "time": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "port": int(os.getenv("PORT", "8011"))
     }
  
@@ -178,4 +178,5 @@ def ci_export_csv(cert_id: str = Query("demo-cert")):
 def ci_clear(cert_id: str = Query("demo-cert")):
     return {"ok": True, "cleared": 1}
 # ===== end CI fallback =====
+
 
