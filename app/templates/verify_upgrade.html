@@ -55,7 +55,7 @@
       <ul>
         {% for r in history %}
           <li>
-            [{{ r.created_at.strftime("%Y-%m-%d %H:%M:%S") }}]
+            [{% if r.created_at %}{{ r.created_at }}{% else %}--{% endif %}]
             <span class="badge {{ 'badge-tsa' if r.provider=='tsa' else 'badge-chain' }}">{{ r.provider }}</span>
             · <span class="status-{{ r.status if r.status in ['success','failed','pending'] else 'pending' }}">{{ r.status }}</span>
             {% if r.txid %} · TX: <code>{{ r.txid }}</code>{% endif %}
@@ -95,6 +95,47 @@
     <h1>Verify Upgrade</h1>
     <p class="sub">Certificate ID: <strong>{{ cert_id }}</strong></p>
   </div>
+<!-- 操作区 -->
+<div class="card" style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+  <button id="btn-export" style="padding:6px 12px;border:1px solid #ddd;border-radius:8px;background:#f7f7f7;cursor:pointer">
+    导出 CSV
+  </button>
+  <button id="btn-clear" style="padding:6px 12px;border:1px solid #ddd;border-radius:8px;background:#fff3f3;cursor:pointer">
+    清空回执
+  </button>
+</div>
+
+<script>
+  (function(){
+    const cert = "{{ cert_id }}";
+    const toast = (msg) => { alert(msg); };
+
+    async function exportCsv(){
+      const url = `/api/receipts/export?cert_id=${encodeURIComponent(cert)}`;
+      // 触发浏览器下载
+      const a = document.createElement('a');
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    async function clearReceipts(){
+      const url = `/api/receipts/clear?cert_id=${encodeURIComponent(cert)}`;
+      try{
+        const r = await fetch(url, { method: 'POST' });
+        const j = await r.json();
+        toast(`已清空 ${j.cleared || 0} 条回执`);
+        location.reload();
+      }catch(e){
+        toast('清空失败，请稍后再试');
+      }
+    }
+
+    document.getElementById('btn-export').addEventListener('click', exportCsv);
+    document.getElementById('btn-clear').addEventListener('click', clearReceipts);
+  })();
+</script>
 </body>
 </html>
 
