@@ -337,12 +337,23 @@ def ci_chain_mock(cert_id: str = Query("demo-cert")):
 
 @app.get("/api/receipts/export")
 def ci_export_csv(cert_id: str = Query("demo-cert")):
+    import io, csv
+    receipts = getattr(app.state, "receipts", {}) or {}
+    rows = receipts.get(cert_id, []) if isinstance(receipts, dict) else []
+
     def gen():
         out = io.StringIO()
         w = csv.writer(out)
-        w.writerow(["id","cert_id","kind","payload","created_at"])
+        w.writerow(["cert_id", "provider", "status", "txid", "created_at"])
+        for r in rows:
+            w.writerow([cert_id, r.get("provider"), r.get("status"), r.get("txid"), r.get("time")])
         yield out.getvalue()
-    return StreamingResponse(gen(), media_type="text/csv; charset=utf-8")
+
+    # ✅ 改成先构造 response，再设置 Content-Disposition 头
+    from fastapi.responses import StreamingResponse
+    resp = StreamingResponse(gen(), media_type="text/csv; charset=utf-8")
+    resp.headers["Content-Disposition"] = f'attachment; filename="receipts_{cert_id}.csv"'
+    return resp
 
 @app.post("/api/receipts/clear")
 def ci_clear(cert_id: str = Query("demo-cert")):
