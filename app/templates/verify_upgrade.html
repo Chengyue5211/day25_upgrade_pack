@@ -1,49 +1,51 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8">
   <title>证据升级校验 · {{ cert_id }}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" href="data:,">
   <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei"; margin: 24px; }
-    .card { border: 1px solid #eee; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-    .muted { color: #666; }
-    code { background: #f6f6f6; padding: 2px 6px; border-radius: 6px; }
-    ul { padding-left: 18px; }
-
-    /* 新增：provider 徽章 & 状态色 */
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 12px; line-height: 18px; vertical-align: middle; border: 1px solid transparent; }
-    .badge-tsa { background: #e6f0ff; color: #1e40af; border-color: #bfdbfe; }     /* 蓝：tsa */
-    .badge-chain { background: #e8fff0; color: #166534; border-color: #bbf7d0; }   /* 绿：chain */
-
-    .status-success { color: #166534; font-weight: 600; }
-    .status-failed { color: #991b1b; font-weight: 600; }
-    .status-pending { color: #92400e; font-weight: 600; }
+    body{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei";margin:24px;color:#222;background:#fafafa}
+    .card{max-width:880px;margin:auto;background:#fff;border:1px solid #eee;border-radius:12px;padding:20px 24px;box-shadow:0 4px 16px rgba(0,0,0,.04);margin-bottom:16px}
+    h1{margin:0 0 8px;font-size:26px}
+    h3{margin:0 0 8px;font-size:18px}
+    .muted{color:#666}
+    code{background:#f6f6f6;padding:2px 6px;border-radius:6px}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;line-height:18px;border:1px solid transparent;vertical-align:middle}
+    .badge-tsa{background:#e6f0ff;color:#1e40af;border-color:#bfdbfe}
+    .badge-chain{background:#e8fff0;color:#166534;border-color:#bbf7d0}
+    .status-success{color:#166534;font-weight:600}
+    .status-failed{color:#991b1b;font-weight:600}
+    .status-pending{color:#92400e;font-weight:600}
   </style>
 </head>
 <body>
-  <h2>核验 · Upgrade 2.5</h2>
 
   <div class="card">
-    <div><strong>CERT ID：</strong><code>{{ cert_id }}</code></div>
+    <h1>Verify Upgrade</h1>
+    <p class="muted">CERT ID：<code>{{ cert_id }}</code></p>
   </div>
 
   <div class="card">
     <h3>最近回执</h3>
-    {% if tsa_last_status %}
-      {% set last_provider = (history[0].provider if (history and history|length>0) else None) %}
-      <p>
-        来源：
+    {% set last_status = tsa_last_status|default('', true) %}
+    {% set last_txid   = tsa_last_txid|default('', true) %}
+    {% set last_provider = (history[0]['provider'] if (history is defined and history and history|length>0 and history[0] is mapping and 'provider' in history[0]) else
+                            (history[0].provider if (history is defined and history and history|length>0 and history[0] is not mapping and history[0].provider is defined) else None)) %}
+    {% if last_status %}
+      <p>来源：
         {% if last_provider %}
           <span class="badge {{ 'badge-tsa' if last_provider=='tsa' else 'badge-chain' }}">{{ last_provider }}</span>
-        {% else %}
-          <span class="muted">未知</span>
-        {% endif %}
+        {% else %}<span class="muted">未知</span>{% endif %}
       </p>
       <p>状态：
-        <span class="status-{{ tsa_last_status if tsa_last_status in ['success','failed','pending'] else 'pending' }}">{{ tsa_last_status }}</span>
+        {% set st = 'success' if last_status in ['ok','success']
+         else 'failed' if last_status in ['error','failed']
+         else 'pending' %}
+        <span class="status-{{ st }}">{{ last_status }}</span>
       </p>
-      <p>TX：{% if tsa_last_txid %}<code>{{ tsa_last_txid }}</code>{% else %}<span class="muted">无</span>{% endif %}</p>
+      <p>TX：{% if last_txid %}<code>{{ last_txid }}</code>{% else %}<span class="muted">无</span>{% endif %}</p>
     {% else %}
       <p class="muted">暂无回执。请先调用 TSA/Chain 回执接口。</p>
     {% endif %}
@@ -51,14 +53,19 @@
 
   <div class="card">
     <h3>回执历史（近 5 条）</h3>
-    {% if history and history|length > 0 %}
+    {% if history is defined and history and history|length>0 %}
       <ul>
         {% for r in history %}
+          {% set provider = r.provider if r is not mapping else r.get('provider') %}
+          {% set status   = r.status   if r is not mapping else r.get('status') %}
+          {% set txid     = r.txid     if r is not mapping else r.get('txid') %}
+          {% set created  = r.created_at if r is not mapping else r.get('created_at') %}
           <li>
-            [{% if r.created_at %}{{ r.created_at }}{% else %}--{% endif %}]
-            <span class="badge {{ 'badge-tsa' if r.provider=='tsa' else 'badge-chain' }}">{{ r.provider }}</span>
-            · <span class="status-{{ r.status if r.status in ['success','failed','pending'] else 'pending' }}">{{ r.status }}</span>
-            {% if r.txid %} · TX: <code>{{ r.txid }}</code>{% endif %}
+            [{% if created %}{{ created }}{% else %}--{% endif %}]
+            <span class="badge {{ 'badge-tsa' if provider=='tsa' else 'badge-chain' }}">{{ provider|default('unknown') }}</span>
+            {% set map = {'ok':'success','success':'success','failed':'failed','error':'failed','pending':'pending'} %}
+            · <span class="status-{{ map.get((status or '')|lower, 'pending') }}">{{ status|default('pending') }}</span>
+            {% if txid %} · TX: <code>{{ txid }}</code>{% endif %}
           </li>
         {% endfor %}
       </ul>
@@ -69,72 +76,80 @@
 
   <div class="card">
     <h3>证据信息（示例字段）</h3>
+    {% set ev = evidence if evidence is defined else {} %}
     <ul>
-      <li>文件：<code>{{ evidence.file_path }}</code></li>
-      <li>SHA-256：<code>{{ evidence.sha256 }}</code></li>
-      <li>C2PA Claim：<code>{{ evidence.c2pa_claim }}</code></li>
-      <li>TSA URL：<code>{{ evidence.tsa_url }}</code></li>
-      <li>Sepolia Tx：<code>{{ evidence.sepolia_txhash }}</code></li>
+      <li>文件：<code>{{ (ev.file_path if ev is not mapping else ev.get('file_path'))|default('--') }}</code></li>
+      <li>SHA-256：<code>{{ (ev.sha256   if ev is not mapping else ev.get('sha256'))|default('--') }}</code></li>
+      <li>C2PA Claim：<code>{{ (ev.c2pa_claim if ev is not mapping else ev.get('c2pa_claim'))|default('--') }}</code></li>
+      <li>TSA URL：<code>{{ (ev.tsa_url if ev is not mapping else ev.get('tsa_url'))|default('--') }}</code></li>
+      <li>Sepolia Tx：<code>{{ (ev.sepolia_txhash if ev is not mapping else ev.get('sepolia_txhash'))|default('--') }}</code></li>
     </ul>
     <p class="muted">以上为示例位，可与实际入库字段对齐替换。</p>
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Verify Upgrade – {{ cert_id }}</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <style>
-    body{font-family:Arial,Helvetica,sans-serif;margin:40px;color:#222;background:#fafafa}
-    .card{max-width:720px;margin:auto;background:#fff;border:1px solid #eee;border-radius:12px;padding:24px;box-shadow:0 4px 16px rgba(0,0,0,.04)}
-    h1{margin:0 0 8px;font-size:26px}
-    .sub{color:#666;margin:0 0 16px}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>Verify Upgrade</h1>
-    <p class="sub">Certificate ID: <strong>{{ cert_id }}</strong></p>
   </div>
-<!-- 操作区 -->
-<div class="card" style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
-  <button id="btn-export" style="padding:6px 12px;border:1px solid #ddd;border-radius:8px;background:#f7f7f7;cursor:pointer">
-    导出 CSV
-  </button>
-  <button id="btn-clear" style="padding:6px 12px;border:1px solid #ddd;border-radius:8px;background:#fff3f3;cursor:pointer">
-    清空回执
-  </button>
+<!-- 快捷操作 + 健康提示条 -->
+<div id="quick-actions" style="margin:10px 0;display:flex;gap:8px;align-items:center">
+  <button id="btn-refresh" style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">刷新历史</button>
+  <button id="btn-clear"   style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">清空历史</button>
+  <a class="btn" href="/api/receipts/export?cert_id={{ cert_id|urlencode }}" target="_blank" rel="noopener">导出 CSV</a>
+  <button id="btn-seed" class="btn">写入示例数据</button>
+  <span id="quick-msg" style="color:#6b7280;font-size:12px;margin-left:6px"></span>
 </div>
+<div id="health-tip" style="margin-top:10px;padding:8px 12px;border:1px solid #eee;border-radius:8px;font-size:13px;background:#fafafa">正在读取健康信息…</div>
 
 <script>
-  (function(){
-    const cert = "{{ cert_id }}";
-    const toast = (msg) => { alert(msg); };
+(()=> {
+  const cert = "{{ cert_id|default('') }}";
+  const msg  = s => { const el = document.getElementById('quick-msg'); if (el) el.textContent = s || ''; };
 
-    async function exportCsv(){
-      const url = `/api/receipts/export?cert_id=${encodeURIComponent(cert)}`;
-      // 触发浏览器下载
-      const a = document.createElement('a');
-      a.href = url;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }
+  // 刷新
+  document.getElementById('btn-refresh').onclick =
+    () => location.replace(location.pathname + '?t=' + Date.now());
 
-    async function clearReceipts(){
-      const url = `/api/receipts/clear?cert_id=${encodeURIComponent(cert)}`;
-      try{
-        const r = await fetch(url, { method: 'POST' });
-        const j = await r.json();
-        toast(`已清空 ${j.cleared || 0} 条回执`);
-        location.reload();
-      }catch(e){
-        toast('清空失败，请稍后再试');
+  // 清空
+  document.getElementById('btn-clear').onclick = () => {
+    fetch(`/api/receipts/clear?cert_id=${encodeURIComponent(cert)}`, { method:'POST' })
+      .then(r => r.json())
+      .then(d => { msg(`已清空 ${d.cleared || 0} 条`); setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 200); })
+      .catch(() => msg('清空失败，请重试'));
+  };
+
+  // 一键写入示例数据：tsa ok + chain pending
+  const seedBtn = document.getElementById('btn-seed');
+  if (seedBtn) {
+    let busy = false;
+    seedBtn.onclick = async () => {
+      if (busy) return; busy = true; seedBtn.disabled = true;
+      try {
+        await Promise.all([
+          fetch(`/api/tsa/mock?cert_id=${encodeURIComponent(cert)}`),
+          fetch(`/api/chain/mock?cert_id=${encodeURIComponent(cert)}`)
+        ]);
+        msg('已写入示例数据 2 条');
+        setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 250);
+      } catch (e) {
+        msg('写入失败，请重试');
+      } finally {
+        busy = false; seedBtn.disabled = false;
       }
-    }
-    document.getElementById('btn-export').addEventListener('click', exportCsv);
-    document.getElementById('btn-clear').addEventListener('click', clearReceipts);
-  })();
+    };
+  }
+
+  // 健康提示条
+  const hEl = document.getElementById('health-tip');
+  fetch(`/health?cert_id=${encodeURIComponent(cert)}`).then(r => r.json()).then(d => {
+    const ok = d.ok !== false;
+    const cnt = d.db && typeof d.db.receipts_count !== 'undefined' ? d.db.receipts_count : '–';
+    const sqlite = d.db && d.db.sqlite_exists ? '✅ DB 就绪' : '⚠️ DB';
+    const tsa = d.config && d.config.tsa_endpoint ? d.config.tsa_endpoint : '（未配置或基础版）';
+    hEl.innerHTML = `状态：${ok ? '✅ 正常' : '❌ 异常'}｜${sqlite}｜条目：<b>${cnt}</b>｜TSA：<code>${tsa}</code>`;
+    hEl.style.background = ok ? '#f0fff4' : '#fff5f5';
+    hEl.style.borderColor = ok ? '#b7f7c2' : '#ffb3b3';
+  }).catch(() => {
+    hEl.textContent = '获取健康信息失败（可能服务未运行或路径错误）';
+    hEl.style.background = '#fff5f5';
+    hEl.style.borderColor = '#ffb3b3';
+  });
+})();
 </script>
 </body>
 </html>
-
