@@ -9,6 +9,7 @@ Thumbs.db
 # Python
 __pycache__/
 *.py[cod]
+*.pyc
 .venv/
 .env
 .pytest_cache/
@@ -18,8 +19,6 @@ __pycache__/
 *.sqlite*
 data.db
 /data/verify_upgrade.db
-*.zip
-*.zip.zip
 
 # Build / Dist
 dist/
@@ -28,15 +27,11 @@ build/
 # VSCode
 .vscode/
 
-__pycache__/
-*.pyc
+# Project
 *.bak
 *.backup.*
 *.html.html
 start_server*.bat
 stop_server*.bat
 app/config.json
-
-__pycache__/
-*.pyc
 
