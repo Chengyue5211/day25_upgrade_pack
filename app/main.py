@@ -131,24 +131,39 @@ except NameError:
 from datetime import datetime
 from pathlib import Path
 import os
-
 @app.get("/health")
 def health(cert_id: str = Query(None)):
-    base = Path(__file__).resolve().parent
-    sqlite_exists = (base / "db.sqlite").exists() or (base.parent / "db.sqlite").exists()
-    receipts = getattr(app.state, "receipts", {}) or {}
-    if isinstance(receipts, dict):
-        receipts_count = len(receipts.get(cert_id, [])) if cert_id else sum(len(v) for v in receipts.values())
-    else:
-        receipts_count = 0
-    return {
-        "ok": True,
-        "service": "verify-upgrade",
-        "time": datetime.utcnow().isoformat() + "Z",
-        "port": 8011,
-        "db": {"sqlite_exists": sqlite_exists, "receipts_count": receipts_count},
-        "config": {"tsa_endpoint": os.getenv("TSA_ENDPOINT", "")},
-    }
+    try:
+        base = Path(__file__).resolve().parent
+        sqlite_exists = (base / "db.sqlite").exists() or (base.parent / "db.sqlite").exists()
+
+        # receipts 兜底成 dict，避免类型异常
+        receipts = getattr(app.state, "receipts", {}) or {}
+        if not isinstance(receipts, dict):
+            receipts = {}
+
+        # 统计条目（按 cert_id 或全部）
+        if cert_id:
+            receipts_count = len(receipts.get(cert_id, []))
+        else:
+            receipts_count = sum(len(v) for v in receipts.values())
+
+        # 用时区感知的 UTC，避免弃用警告/命名冲突
+        import datetime as _dt
+        now_iso = _dt.datetime.now(_dt.UTC).isoformat()
+
+        return {
+            "ok": True,
+            "service": "verify-upgrade",
+            "time": now_iso,
+            "port": 8011,
+            "db": {"sqlite_exists": sqlite_exists, "receipts_count": receipts_count},
+            "config": {"tsa_endpoint": os.getenv("TSA_ENDPOINT", "")},
+        }
+    except Exception as e:
+        # 任何异常都返回 200 + 可读错误，前端不再 500
+        return {"ok": False, "error": _safe_err(e), "service": "verify-upgrade"}
+
 @app.get("/verify_upgrade/{cert_id}", response_class=HTMLResponse)
 def verify_upgrade_page(cert_id: str, request: Request):
     """
@@ -319,10 +334,16 @@ def _maybe_write_sqlite(cert_id: str, item: dict):
 # ===== 端点从这里开始 =====
 @app.get("/api/tsa/mock")
 def ci_tsa_mock(cert_id: str = Query("demo-cert")):
-    ...
-@app.get("/api/tsa/mock")
-def ci_tsa_mock(cert_id: str = Query("demo-cert")):
-    return {"ok": True, "cert_id": cert_id}
+    item = {
+        "provider": "tsa",
+        "status":   "ok",
+        "txid":     _gen_txid("0xTX_TSA_OK_"),
+        "time":     _now_str(),
+    }
+    _append_receipt(app, cert_id, item)
+    _maybe_write_sqlite(cert_id, item)
+    return {"ok": True, "cert_id": cert_id, "tx": item["txid"]}
+
 @app.get("/api/chain/mock")
 def ci_chain_mock(cert_id: str = Query("demo-cert")):
     item = {
@@ -356,7 +377,24 @@ def ci_export_csv(cert_id: str = Query("demo-cert")):
     return resp
 
 @app.post("/api/receipts/clear")
-def ci_clear(cert_id: str = Query("demo-cert")):
-    return {"ok": True, "cleared": 1}
-# ===== end CI fallback =====
+def clear_receipts(request: Request, cert_id: str = Query("")):
+    app = request.app
+    cleared = 0
+
+    # 没有内存表时兜底
+    if not hasattr(app.state, "receipts") or not isinstance(app.state.receipts, dict):
+        app.state.receipts = {}
+
+    if cert_id:
+        # 清指定 cert 的全部记录
+        lst = app.state.receipts.get(cert_id, [])
+        cleared = len(lst)
+        app.state.receipts[cert_id] = []
+    else:
+        # 清所有 cert 的全部记录（谨慎使用）
+        cleared = sum(len(v) for v in app.state.receipts.values())
+        app.state.receipts = {}
+
+    return {"ok": True, "cleared": cleared}
+
 

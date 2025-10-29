@@ -102,11 +102,13 @@
   const msg  = s => { const el = document.getElementById('quick-msg'); if (el) el.textContent = s || ''; };
 
   // 刷新
-  document.getElementById('btn-refresh').onclick =
-    () => location.replace(location.pathname + '?t=' + Date.now());
+  const btnRefresh = document.getElementById('btn-refresh');
+  if (btnRefresh) btnRefresh.onclick = () =>
+    location.replace(location.pathname + '?t=' + Date.now());
 
   // 清空
-  document.getElementById('btn-clear').onclick = () => {
+  const btnClear = document.getElementById('btn-clear');
+  if (btnClear) btnClear.onclick = () => {
     fetch(`/api/receipts/clear?cert_id=${encodeURIComponent(cert)}`, { method:'POST' })
       .then(r => r.json())
       .then(d => { msg(`已清空 ${d.cleared || 0} 条`); setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 200); })
@@ -134,9 +136,9 @@
     };
   }
 
-  // 健康提示条
+  // 健康提示条渲染
   const hEl = document.getElementById('health-tip');
-  fetch(`/health?cert_id=${encodeURIComponent(cert)}`).then(r => r.json()).then(d => {
+  function renderHealth(d){
     const ok = d.ok !== false;
     const cnt = d.db && typeof d.db.receipts_count !== 'undefined' ? d.db.receipts_count : '–';
     const sqlite = d.db && d.db.sqlite_exists ? '✅ DB 就绪' : '⚠️ DB';
@@ -144,11 +146,27 @@
     hEl.innerHTML = `状态：${ok ? '✅ 正常' : '❌ 异常'}｜${sqlite}｜条目：<b>${cnt}</b>｜TSA：<code>${tsa}</code>`;
     hEl.style.background = ok ? '#f0fff4' : '#fff5f5';
     hEl.style.borderColor = ok ? '#b7f7c2' : '#ffb3b3';
-  }).catch(() => {
+  }
+
+  // 首次加载
+const qs1 = new URLSearchParams({ cert_id: cert }).toString();
+fetch(`/health?${qs1}`)
+  .then(r => r.json())
+  .then(renderHealth)
+  .catch(() => {
     hEl.textContent = '获取健康信息失败（可能服务未运行或路径错误）';
     hEl.style.background = '#fff5f5';
     hEl.style.borderColor = '#ffb3b3';
   });
+
+  // 健康条自动刷新（5s）
+setInterval(() => {
+    const qs2 = new URLSearchParams({ cert_id: cert }).toString();
+    fetch(`/health?${qs2}`)
+       .then(r => r.json())
+       .then(renderHealth)
+      .catch(()=>{});
+  }, 5000);
 })();
 </script>
 </body>
