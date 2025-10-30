@@ -134,21 +134,42 @@ import os
 @app.get("/health")
 def health(cert_id: str = Query(None)):
     try:
+        from pathlib import Path
+        import os, sqlite3 as _sqlite
         base = Path(__file__).resolve().parent
-        sqlite_exists = (base / "db.sqlite").exists() or (base.parent / "db.sqlite").exists()
 
-        # receipts 兜底成 dict，避免类型异常
+        # 正确检测 data/verify_upgrade.db
+        db_path = os.path.join("data", "verify_upgrade.db")
+        sqlite_exists = os.path.exists(db_path)
+
+        # receipts 兜底（内存）
         receipts = getattr(app.state, "receipts", {}) or {}
         if not isinstance(receipts, dict):
             receipts = {}
 
-        # 统计条目（按 cert_id 或全部）
-        if cert_id:
-            receipts_count = len(receipts.get(cert_id, []))
-        else:
-            receipts_count = sum(len(v) for v in receipts.values())
+        # 若能从 DB 统计，就用 DB；否则回退内存
+        receipts_count = 0
+        db_counted = False
+        if sqlite_exists and cert_id:
+            try:
+                conn = _sqlite.connect(db_path)
+                try:
+                    row = conn.execute(
+                        "SELECT COUNT(*) FROM receipts WHERE cert_id=?",
+                        (cert_id,)
+                    ).fetchone()
+                    if row and isinstance(row[0], (int,)):
+                        receipts_count = int(row[0])
+                        db_counted = True
+                finally:
+                    conn.close()
+            except Exception:
+                pass
 
-        # 用时区感知的 UTC，避免弃用警告/命名冲突
+        if not db_counted:
+            receipts_count = (len(receipts.get(cert_id, []))
+                              if cert_id else sum(len(v) for v in receipts.values()))
+
         import datetime as _dt
         now_iso = _dt.datetime.now(_dt.UTC).isoformat()
 
@@ -161,7 +182,6 @@ def health(cert_id: str = Query(None)):
             "config": {"tsa_endpoint": os.getenv("TSA_ENDPOINT", "")},
         }
     except Exception as e:
-        # 任何异常都返回 200 + 可读错误，前端不再 500
         return {"ok": False, "error": _safe_err(e), "service": "verify-upgrade"}
 
 @app.get("/verify_upgrade/{cert_id}", response_class=HTMLResponse)
@@ -360,62 +380,105 @@ def ci_export_csv(
     cert_id: str = Query("demo-cert"),
     q: str = Query("", description="按包含过滤 provider/status/txid/created_at")
 ):
-    import io, csv
+    import io, csv, os, sqlite3
     from fastapi.responses import Response
 
-    # 1) 拿数据
-    receipts = getattr(app.state, "receipts", {}) or {}
-    rows = receipts.get(cert_id, []) if isinstance(receipts, dict) else []
-
-    # 2) 关键词过滤（大小写不敏感）
     q_norm = (q or "").strip().lower()
-    if q_norm:
-        def hit(r):
-            fields = [
-                str(r.get("provider", "")),
-                str(r.get("status", "")),
-                str(r.get("txid", "")),
-                str(r.get("time", "")),
-            ]
-            return any(q_norm in f.lower() for f in fields)
-        rows = [r for r in rows if hit(r)]
 
-    # 3) 一次性构造 CSV 文本（加 BOM，Excel 友好）
+    def _hit(r: dict, qn: str) -> bool:
+        if not qn: return True
+        fields = [str(r.get(k, "")) for k in ("provider","status","txid","time")]
+        return any(qn in f.lower() for f in fields)
+
+    rows: list[dict] = []
+
+    # 1) 先读 DB
+    db_path = os.path.join("data", "verify_upgrade.db")
+    if os.path.exists(db_path):
+        try:
+            conn = sqlite3.connect(db_path)
+            try:
+                cur = conn.execute(
+                    "SELECT provider,status,txid,created_at FROM receipts WHERE cert_id=? ORDER BY id ASC",
+                    (cert_id,)
+                )
+                rows.extend({"provider":p,"status":s,"txid":t,"time":str(c)} for (p,s,t,c) in cur.fetchall() or [])
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    # 2) 再叠加内存
+    mem = (getattr(app.state, "receipts", {}) or {}).get(cert_id, [])
+    rows.extend(mem if isinstance(mem, list) else [])
+
+    # 3) 去重（按 txid/provider/status/time）
+    seen, uniq = set(), []
+    for r in rows:
+        key = (r.get("txid"), r.get("provider"), r.get("status"), r.get("time"))
+        if key in seen: continue
+        seen.add(key); uniq.append(r)
+    rows = uniq
+
+    # 4) 关键词过滤
+    if q_norm:
+        rows = [r for r in rows if _hit(r, q_norm)]
+
+    # 5) 构造 CSV（加 BOM，时间写文本到秒）
     out = io.StringIO(newline="")
     w = csv.writer(out)
-    w.writerow(["cert_id", "provider", "status", "txid", "created_at"])
+    w.writerow(["cert_id","provider","status","txid","created_at"])
     for r in rows:
-        created = "'" + ((r.get("time") or "").replace("T", " ")[:19])
+        created = "'" + ((r.get("time") or "").replace("T"," ")[:19])
         w.writerow([cert_id, r.get("provider"), r.get("status"), r.get("txid"), created])
+    csv_bytes = ("\ufeff" + out.getvalue()).encode("utf-8")
 
-    csv_text = out.getvalue()
-    csv_bytes = ("\ufeff" + csv_text).encode("utf-8")  # 前置 BOM
-
-    # 4) 返回二进制响应（非流式，避免浏览器卡住）
+    # 6) 禁止缓存，避免下载到旧文件
     fname = f'receipts_{cert_id}{("_"+q_norm) if q_norm else ""}.csv'
-    headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
+    headers = {
+        "Content-Disposition": f'attachment; filename="{fname}"',
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
     return Response(content=csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)
-
+ 
 @app.post("/api/receipts/clear")
 def clear_receipts(request: Request, cert_id: str = Query("")):
     app = request.app
-    cleared = 0
+    cleared_mem = 0
+    cleared_db = 0
 
-    # 没有内存表时兜底
+    # 清内存
     if not hasattr(app.state, "receipts") or not isinstance(app.state.receipts, dict):
         app.state.receipts = {}
-
     if cert_id:
-        # 清指定 cert 的全部记录
         lst = app.state.receipts.get(cert_id, [])
-        cleared = len(lst)
+        cleared_mem = len(lst)
         app.state.receipts[cert_id] = []
     else:
-        # 清所有 cert 的全部记录（谨慎使用）
-        cleared = sum(len(v) for v in app.state.receipts.values())
+        cleared_mem = sum(len(v) for v in app.state.receipts.values())
         app.state.receipts = {}
 
-    return {"ok": True, "cleared": cleared}
+    # 清 DB（若存在）
+    try:
+        import os, sqlite3
+        db_path = os.path.join("data", "verify_upgrade.db")
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            try:
+                if cert_id:
+                    res = conn.execute("DELETE FROM receipts WHERE cert_id=?", (cert_id,))
+                else:
+                    res = conn.execute("DELETE FROM receipts")  # 谨慎使用：全清
+                conn.commit()
+                cleared_db = res.rowcount or 0
+            finally:
+                conn.close()
+    except Exception:
+        pass
+
+    return {"ok": True, "cleared": cleared_mem + cleared_db}
 
 @app.get("/favicon.ico")
 def favicon():
