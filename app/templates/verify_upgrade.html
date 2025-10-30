@@ -90,6 +90,9 @@
 <div id="quick-actions" style="margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
   <button id="btn-refresh" style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">刷新历史</button>
   <button id="btn-clear"   style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">清空历史</button>
+  <button id="btn-preview" style="padding:6px 10px;border:1px solid #d1d5db;background:#fff;border-radius:8px;cursor:pointer">预览</button>
+  <button id="btn-export"  style="padding:6px 10px;border:1px solid #d1d5db;background:#f0f9ff;border-radius:8px;cursor:pointer">导出 CSV</button>
+  <span id="export-hint"  style="font-size:12px;color:#6b7280;">（预计：-- 条）</span>
 
   <!-- 在这行后面插入“清空所有”按钮 -->
   <button id="btn-clear-all"
@@ -313,6 +316,78 @@ async function updateExportHint(){
 
 loadFilters();  
 updateExportHint();  
+// —— 简易预览对话框 —— //
+function showPreviewDialog(data){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#fff;border-radius:12px;max-width:900px;width:90vw;max-height:80vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.2);';
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #eee;">
+      <div style="font-weight:600">预览（前 ${data.limit} 条 / 共 ${data.total}）</div>
+      <button id="pv-close" style="padding:4px 8px;border:1px solid #ddd;background:#f8f8f8;border-radius:8px;cursor:pointer">关闭</button>
+    </div>
+    <div style="padding:12px 16px;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr>
+            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">cert_id</th>
+            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">provider</th>
+            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">status</th>
+            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">txid</th>
+            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">created_at</th>
+          </tr>
+        </thead>
+        <tbody id="pv-body"></tbody>
+      </table>
+    </div>
+  `;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  const tbody = card.querySelector('#pv-body');
+  (data.rows || []).forEach(r => {
+    const tr = document.createElement('tr');
+    ['cert_id','provider','status','txid','created_at'].forEach(k=>{
+      const td = document.createElement('td');
+      td.style.cssText = 'border-bottom:1px solid #f3f3f3;padding:6px 8px;white-space:nowrap;';
+      td.textContent = r[k] || '';
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  const close = () => overlay.remove();
+  card.querySelector('#pv-close').onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  document.addEventListener('keydown', function esc(e){ if(e.key==='Escape'){ close(); document.removeEventListener('keydown', esc); }});
+}
+
+// 预览按钮：与导出同样的 q，调用 /api/receipts/preview
+const btnPreview = document.getElementById('btn-preview');
+if (btnPreview) btnPreview.onclick = async () => {
+  try{
+    // 若你已有 buildQueryParts()，直接用；没有就按导出那段拼 parts
+    const parts = typeof buildQueryParts === 'function' ? buildQueryParts() : (() => {
+      const qEl = document.getElementById('hist-q');
+      const prov = (document.getElementById('sel-provider')?.value || '').trim();
+      const stat = (document.getElementById('sel-status')?.value   || '').trim();
+      const p = [];
+      if (prov) p.push(`provider:${prov}`);
+      if (stat) p.push(`status:${stat}`);
+      const free = qEl ? (qEl.value || '').trim() : '';
+      if (free) p.push(free);
+      return p;
+    })();
+
+    const qs = new URLSearchParams({ cert_id: String(cert), limit: '20', t: Date.now().toString() });
+    if (parts.length) qs.set('q', parts.join(' '));
+
+    const data = await fetch('/api/receipts/preview?' + qs).then(r=>r.json());
+    if (!data || data.ok === false) { msg('预览失败'); return; }
+    showPreviewDialog(data);
+  }catch{ msg('预览失败'); }
+};
 })();
 </script>
 </body>
