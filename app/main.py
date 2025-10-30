@@ -356,11 +356,18 @@ def ci_chain_mock(cert_id: str = Query("demo-cert")):
     return {"ok": True, "cert_id": cert_id, "tx": item["txid"]}
 
 @app.get("/api/receipts/export")
-def ci_export_csv(cert_id: str = Query("demo-cert"), q: str = Query("", description="按包含过滤 provider/status/txid/created_at")):
+def ci_export_csv(
+    cert_id: str = Query("demo-cert"),
+    q: str = Query("", description="按包含过滤 provider/status/txid/created_at")
+):
     import io, csv
+    from fastapi.responses import Response
+
+    # 1) 拿数据
     receipts = getattr(app.state, "receipts", {}) or {}
     rows = receipts.get(cert_id, []) if isinstance(receipts, dict) else []
 
+    # 2) 关键词过滤（大小写不敏感）
     q_norm = (q or "").strip().lower()
     if q_norm:
         def hit(r):
@@ -373,18 +380,21 @@ def ci_export_csv(cert_id: str = Query("demo-cert"), q: str = Query("", descript
             return any(q_norm in f.lower() for f in fields)
         rows = [r for r in rows if hit(r)]
 
-    def gen():
-        out = io.StringIO()
-        w = csv.writer(out)
-        w.writerow(["cert_id", "provider", "status", "txid", "created_at"])
-        for r in rows:
-            w.writerow([cert_id, r.get("provider"), r.get("status"), r.get("txid"), r.get("time")])
-        yield out.getvalue()
+    # 3) 一次性构造 CSV 文本（加 BOM，Excel 友好）
+    out = io.StringIO(newline="")
+    w = csv.writer(out)
+    w.writerow(["cert_id", "provider", "status", "txid", "created_at"])
+    for r in rows:
+        created = "'" + ((r.get("time") or "").replace("T", " ")[:19])
+        w.writerow([cert_id, r.get("provider"), r.get("status"), r.get("txid"), created])
 
-    from fastapi.responses import StreamingResponse
-    resp = StreamingResponse(gen(), media_type="text/csv; charset=utf-8")
-    resp.headers["Content-Disposition"] = f'attachment; filename="receipts_{cert_id}.csv"'
-    return resp
+    csv_text = out.getvalue()
+    csv_bytes = ("\ufeff" + csv_text).encode("utf-8")  # 前置 BOM
+
+    # 4) 返回二进制响应（非流式，避免浏览器卡住）
+    fname = f'receipts_{cert_id}{("_"+q_norm) if q_norm else ""}.csv'
+    headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
+    return Response(content=csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)
 
 @app.post("/api/receipts/clear")
 def clear_receipts(request: Request, cert_id: str = Query("")):
