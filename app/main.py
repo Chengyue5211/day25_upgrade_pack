@@ -552,6 +552,96 @@ def count_receipts(
         uniq = [r for r in uniq if _hit(r)]
 
     return {"ok": True, "count": len(uniq)}
+
+@app.get("/api/receipts/preview")
+def preview_receipts(
+    cert_id: str = Query("demo-cert"),
+    q: str = Query("", description="精确筛选 provider:/status:/tx: 可与关键词混用"),
+    limit: int = Query(20, ge=1, le=200)
+):
+    import os, sqlite3
+
+    # --- 解析 q（与 export/count 相同） ---
+    raw = (q or "").strip()
+    tokens = [t for t in raw.split() if t]
+    filters = {"provider": [], "status": [], "tx": []}
+    terms: list[str] = []
+    for t in tokens:
+        if ":" in t:
+            k, v = t.split(":", 1)
+            k = k.lower().strip()
+            v = v.strip()
+            if k in filters and v:
+                filters[k].append(v.lower())
+            else:
+                terms.append(t.lower())
+        else:
+            terms.append(t.lower())
+
+    def _hit(r: dict) -> bool:
+        if terms:
+            fields = [
+                str(r.get("provider", "")),
+                str(r.get("status", "")),
+                str(r.get("txid", "")),
+                str(r.get("time", "")),
+            ]
+            if not any(any(term in f.lower() for f in fields) for term in terms):
+                return False
+        if filters["provider"] and str(r.get("provider","")).lower() not in filters["provider"]:
+            return False
+        if filters["status"] and str(r.get("status","")).lower() not in filters["status"]:
+            return False
+        if filters["tx"] and not any(v in str(r.get("txid","")).lower() for v in filters["tx"]):
+            return False
+        return True
+
+    # --- 先读 DB，再叠加内存 ---
+    rows: list[dict] = []
+    db_path = os.path.join("data", "verify_upgrade.db")
+    if os.path.exists(db_path):
+        try:
+            conn = sqlite3.connect(db_path)
+            try:
+                cur = conn.execute(
+                    "SELECT provider,status,txid,created_at FROM receipts WHERE cert_id=? ORDER BY id ASC",
+                    (cert_id,)
+                )
+                rows.extend({"provider":p,"status":s,"txid":t,"time":str(c)} for (p,s,t,c) in cur.fetchall() or [])
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+    mem = (getattr(app.state, "receipts", {}) or {}).get(cert_id, [])
+    if isinstance(mem, list):
+        rows.extend(mem)
+
+    # --- 去重 ---
+    seen, uniq = set(), []
+    for r in rows:
+        key = (r.get("txid"), r.get("provider"), r.get("status"), r.get("time"))
+        if key in seen: 
+            continue
+        seen.add(key); uniq.append(r)
+
+    # --- 过滤 & 统计 & 截断 ---
+    if tokens:
+        uniq = [r for r in uniq if _hit(r)]
+    total = len(uniq)
+    head = uniq[:limit]
+
+    # 统一字段名，方便前端渲染
+    preview = [
+        {
+            "cert_id": cert_id,
+            "provider": r.get("provider"),
+            "status":   r.get("status"),
+            "txid":     r.get("txid"),
+            "created_at": str(r.get("time") or "")
+        } for r in head
+    ]
+    return {"ok": True, "total": total, "limit": limit, "rows": preview}
  
 @app.post("/api/receipts/clear")
 def clear_receipts(request: Request, cert_id: str = Query("")):
