@@ -91,28 +91,22 @@
   <button id="btn-refresh" style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">刷新历史</button>
   <button id="btn-clear"   style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">清空历史</button>
 
-  <!-- 关键词 -->
-  <input id="hist-q" placeholder="关键词（可含 tx 片段）" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px;min-width:180px" />
+  <!-- 在这行后面插入“清空所有”按钮 -->
+  <button id="btn-clear-all"
+          style="display:none;padding:6px 10px;border:1px solid #ef4444;background:#fff5f5;border-radius:8px;cursor:pointer;color:#b91c1c"
+          title="仅本机显示：清空所有证书（内存+DB）">清空所有（All）</button>
 
-  <!-- Provider 下拉 -->
+  <!-- 下面是原有的输入/下拉/导出按钮 -->
+  <input id="hist-q" placeholder="关键词（可含 tx 片段）" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px;min-width:180px" />
   <label style="font-size:12px;color:#666">Provider</label>
   <select id="sel-provider" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px">
-    <option value="">All</option>
-    <option value="tsa">tsa</option>
-    <option value="chain">chain</option>
+    <option value="">All</option><option value="tsa">tsa</option><option value="chain">chain</option>
   </select>
-
-  <!-- Status 下拉 -->
   <label style="font-size:12px;color:#666">Status</label>
   <select id="sel-status" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px">
-    <option value="">All</option>
-    <option value="ok">ok</option>
-    <option value="pending">pending</option>
-    <option value="failed">failed</option>
+    <option value="">All</option><option value="ok">ok</option><option value="pending">pending</option><option value="failed">failed</option>
   </select>
-
   <button id="btn-export" style="padding:6px 10px;border:1px solid #d1d5db;background:#f0f9ff;border-radius:8px;cursor:pointer">导出 CSV</button>
-
   <button id="btn-seed" class="btn">写入示例数据</button>
   <span id="quick-msg" style="color:#6b7280;font-size:12px;margin-left:6px"></span>
 </div>
@@ -158,6 +152,34 @@
       }
     };
   }
+// 清空所有 cert（仅本机显示 + 二次确认）
+const btnClearAll = document.getElementById('btn-clear-all');
+if (btnClearAll) {
+  const isLocal = (location.hostname === '127.0.0.1' || location.hostname === 'localhost');
+  if (isLocal) btnClearAll.style.display = 'inline-block';
+
+  btnClearAll.onclick = async () => {
+    if (!isLocal) return; // 保险
+    if (!confirm('⚠️ 将清空【所有证书】的历史记录（内存 + DB）。确定继续？')) return;
+    const text = prompt('第二步确认：请输入 DELETE');
+    if ((text || '').trim().toUpperCase() !== 'DELETE') { msg('已取消'); return; }
+
+    try {
+      btnClearAll.disabled = true;
+      const res = await fetch('/api/receipts/clear', { method: 'POST' }); // 不带 cert_id => 全清
+      const d = await res.json();
+      msg(`已清空所有：${d.cleared || 0} 条`);
+      // 立即刷新健康条 & 页面
+      const h = await fetch('/health?' + new URLSearchParams({ cert_id: cert })).then(r=>r.json());
+      renderHealth(h);
+      setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 300);
+    } catch {
+      msg('清空失败，请重试');
+    } finally {
+      btnClearAll.disabled = false;
+    }
+  };
+}
 
   // 健康提示条渲染
   const hEl = document.getElementById('health-tip');
