@@ -171,8 +171,7 @@ def verify_upgrade_page(cert_id: str, request: Request):
     若不存在或失败，则回退到 get_* 函数；所有分支都有兜底。
     """
     ctx = {
-        "request": request,
-        "cert_id": cert_id,
+         "cert_id": cert_id,
         "tsa_last_status": None,
         "tsa_last_txid": None,
         "history": [],
@@ -294,7 +293,7 @@ def verify_upgrade_page(cert_id: str, request: Request):
         except Exception:
             pass
 
-    return templates.TemplateResponse("verify_upgrade.html", ctx)
+    return templates.TemplateResponse(request, "verify_upgrade.html", ctx)
 
 @app.get("/api/tsa/config")
 def ci_tsa_config():
@@ -307,7 +306,7 @@ def ci_tsa_config():
 def _now_str():
     import datetime, time
     try:
-        return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 
@@ -397,4 +396,10 @@ def clear_receipts(request: Request, cert_id: str = Query("")):
 
     return {"ok": True, "cleared": cleared}
 
+@app.get("/favicon.ico")
+def favicon():
+    import base64, io
+    from fastapi.responses import StreamingResponse
+    data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABJf6rWQAAAABJRU5ErkJggg==")
+    return StreamingResponse(io.BytesIO(data), media_type="image/png")
 
