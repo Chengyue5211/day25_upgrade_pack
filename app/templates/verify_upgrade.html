@@ -262,13 +262,12 @@ async function updateExportHint(){
   const hintEl = document.getElementById('export-hint');
   if (!hintEl) return;
   try {
-    // 用 health 的 DB 计数做上限，避免浏览器缓存
-    const qs = new URLSearchParams({ cert_id: String(cert), t: Date.now().toString() });
-    const h  = await fetch('/health?' + qs).then(r => r.json());
-    const base = (h && h.db && typeof h.db.receipts_count === 'number') ? h.db.receipts_count : 0;
     const parts = buildQueryParts();
-    hintEl.textContent = parts.length ? `（预计 ≤ ${base} 条，已套用筛选）`
-                                      : `（预计：${base} 条）`;
+    const qs = new URLSearchParams({ cert_id: String(cert), t: Date.now().toString() });
+    if (parts.length) qs.set('q', parts.join(' '));   // 精确语法 + 关键词
+    const d = await fetch('/api/receipts/count?' + qs).then(r => r.json());
+    const n = (d && d.ok && typeof d.count === 'number') ? d.count : 0;
+    hintEl.textContent = `（预计：${n} 条）`;  // 现在是精确计数
   } catch {
     const hintEl2 = document.getElementById('export-hint');
     if (hintEl2) hintEl2.textContent = '（预计：--）';
