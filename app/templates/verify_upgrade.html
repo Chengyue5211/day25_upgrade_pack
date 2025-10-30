@@ -106,9 +106,11 @@
   <select id="sel-status" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px">
     <option value="">All</option><option value="ok">ok</option><option value="pending">pending</option><option value="failed">failed</option>
   </select>
-  <button id="btn-export" style="padding:6px 10px;border:1px solid #d1d5db;background:#f0f9ff;border-radius:8px;cursor:pointer">导出 CSV</button>
-  <button id="btn-seed" class="btn">写入示例数据</button>
-  <span id="quick-msg" style="color:#6b7280;font-size:12px;margin-left:6px"></span>
+<button id="btn-export" style="padding:6px 10px;border:1px solid #d1d5db;background:#f0f9ff;border-radius:8px;cursor:pointer">导出 CSV</button>
+<span id="export-hint" style="font-size:12px;color:#6b7280;">（预计：-- 条）</span>
+<button id="btn-seed" class="btn">写入示例数据</button>
+<span id="quick-msg" style="color:#6b7280;font-size:12px;margin-left:6px"></span>
+
 </div>
 
 <div id="health-tip" style="margin-top:10px;padding:8px 12px;border:1px solid #eee;border-radius:8px;font-size:13px;background:#fafafa">正在读取健康信息…</div>
@@ -124,13 +126,19 @@
     location.replace(location.pathname + '?t=' + Date.now());
 
   // 清空
-  const btnClear = document.getElementById('btn-clear');
-  if (btnClear) btnClear.onclick = () => {
-    fetch(`/api/receipts/clear?cert_id=${encodeURIComponent(cert)}`, { method:'POST' })
-      .then(r => r.json())
-      .then(d => { msg(`已清空 ${d.cleared || 0} 条`); setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 200); })
-      .catch(() => msg('清空失败，请重试'));
-  };
+const btnClear = document.getElementById('btn-clear');
+if (btnClear) btnClear.onclick = () => {
+  fetch(`/api/receipts/clear?cert_id=${encodeURIComponent(cert)}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(async d => {
+      msg(`已清空 ${d.cleared || 0} 条`);
+      const h = await fetch('/health?' + new URLSearchParams({ cert_id: cert })).then(r => r.json());
+      renderHealth(h);
+      updateExportHint();
+      setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 200);
+    })
+    .catch(() => msg('清空失败，请重试'));
+};
 
   // 一键写入示例数据：tsa ok + chain pending
   const seedBtn = document.getElementById('btn-seed');
@@ -144,6 +152,7 @@
           fetch(`/api/chain/mock?cert_id=${encodeURIComponent(cert)}`)
         ]);
         msg('已写入示例数据 2 条');
+        updateExportHint();   // ← 新增：写入后马上刷新“预计条数”
         setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 250);
       } catch (e) {
         msg('写入失败，请重试');
@@ -172,6 +181,7 @@ if (btnClearAll) {
       // 立即刷新健康条 & 页面
       const h = await fetch('/health?' + new URLSearchParams({ cert_id: cert })).then(r=>r.json());
       renderHealth(h);
+      updateExportHint();   
       setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 300);
     } catch {
       msg('清空失败，请重试');
@@ -207,6 +217,8 @@ fetch(`/health?${qs1}`)
 // 导出 CSV：把下拉转为精确语法，并与关键词一起拼成 q
 const btnExport = document.getElementById('btn-export');
 if (btnExport) btnExport.onclick = () => {
+  updateExportHint(); // 点击导出前先刷新“预计条数”提示（异步，不影响下载）
+
   const qEl   = document.getElementById('hist-q');
   const prov  = (document.getElementById('sel-provider')?.value || '').trim();
   const stat  = (document.getElementById('sel-status')?.value   || '').trim();
@@ -233,6 +245,44 @@ setInterval(() => {
        .then(renderHealth)
       .catch(()=>{});
   }, 5000);
+// === 导出前“预计条数 N”辅助 ===
+function buildQueryParts(){
+  const qEl = document.getElementById('hist-q');
+  const prov = (document.getElementById('sel-provider')?.value || '').trim();
+  const stat = (document.getElementById('sel-status')?.value || '').trim();
+  const parts = [];
+  if (prov) parts.push(`provider:${prov}`);
+  if (stat) parts.push(`status:${stat}`);
+  const free = qEl ? (qEl.value || '').trim() : '';
+  if (free) parts.push(free);
+  return parts;
+}
+
+async function updateExportHint(){
+  const hintEl = document.getElementById('export-hint');
+  if (!hintEl) return;
+  try {
+    // 用 health 的 DB 计数做上限，避免浏览器缓存
+    const qs = new URLSearchParams({ cert_id: String(cert), t: Date.now().toString() });
+    const h  = await fetch('/health?' + qs).then(r => r.json());
+    const base = (h && h.db && typeof h.db.receipts_count === 'number') ? h.db.receipts_count : 0;
+    const parts = buildQueryParts();
+    hintEl.textContent = parts.length ? `（预计 ≤ ${base} 条，已套用筛选）`
+                                      : `（预计：${base} 条）`;
+  } catch {
+    const hintEl2 = document.getElementById('export-hint');
+    if (hintEl2) hintEl2.textContent = '（预计：--）';
+  }
+}
+
+// 输入/下拉改变时更新提示；初次进来也估算一次
+['hist-q','sel-provider','sel-status'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input',  () => updateExportHint());
+  el.addEventListener('change', () => updateExportHint());
+});
+updateExportHint();
 })();
 </script>
 </body>
