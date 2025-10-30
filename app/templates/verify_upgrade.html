@@ -117,8 +117,36 @@
 
 <script>
 (()=> {
-  const cert = "{{ cert_id|default('') }}";
-  const msg  = s => { const el = document.getElementById('quick-msg'); if (el) el.textContent = s || ''; };
+const cert = "{{ cert_id|default('') }}";
+const msg  = s => { const el = document.getElementById('quick-msg'); if (el) el.textContent = s || ''; };
+
+// —— 筛选项本地记忆（按 cert 作用域）——
+const _memKey = (name) => `vu:${cert}:filter:${name}`;
+
+function loadFilters() {
+  try {
+    const q = localStorage.getItem(_memKey('q')) ?? '';
+    const provider = localStorage.getItem(_memKey('provider')) ?? '';
+    const status   = localStorage.getItem(_memKey('status')) ?? '';
+    const qEl   = document.getElementById('hist-q');
+    const pEl   = document.getElementById('sel-provider');
+    const sEl   = document.getElementById('sel-status');
+    if (qEl) qEl.value = q;
+    if (pEl) pEl.value = provider;
+    if (sEl) sEl.value = status;
+  } catch {}
+}
+
+function saveFilters() {
+  try {
+    const qEl   = document.getElementById('hist-q');
+    const pEl   = document.getElementById('sel-provider');
+    const sEl   = document.getElementById('sel-status');
+    if (qEl) localStorage.setItem(_memKey('q'), qEl.value || '');
+    if (pEl) localStorage.setItem(_memKey('provider'), (pEl.value || ''));
+    if (sEl) localStorage.setItem(_memKey('status'),   (sEl.value || ''));
+  } catch {}
+}
 
   // 刷新
   const btnRefresh = document.getElementById('btn-refresh');
@@ -278,10 +306,13 @@ async function updateExportHint(){
 ['hist-q','sel-provider','sel-status'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
-  el.addEventListener('input',  () => updateExportHint());
-  el.addEventListener('change', () => updateExportHint());
+  const handler = () => { saveFilters(); updateExportHint(); };
+  el.addEventListener('input',  handler);
+  el.addEventListener('change', handler);
 });
-updateExportHint();
+
+loadFilters();  
+updateExportHint();  
 })();
 </script>
 </body>
