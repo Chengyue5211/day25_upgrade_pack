@@ -91,7 +91,26 @@
   <button id="btn-refresh" style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">刷新历史</button>
   <button id="btn-clear"   style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">清空历史</button>
 
-  <input id="hist-q" placeholder="筛选关键词…" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px;min-width:180px" />
+  <!-- 关键词 -->
+  <input id="hist-q" placeholder="关键词（可含 tx 片段）" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px;min-width:180px" />
+
+  <!-- Provider 下拉 -->
+  <label style="font-size:12px;color:#666">Provider</label>
+  <select id="sel-provider" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px">
+    <option value="">All</option>
+    <option value="tsa">tsa</option>
+    <option value="chain">chain</option>
+  </select>
+
+  <!-- Status 下拉 -->
+  <label style="font-size:12px;color:#666">Status</label>
+  <select id="sel-status" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px">
+    <option value="">All</option>
+    <option value="ok">ok</option>
+    <option value="pending">pending</option>
+    <option value="failed">failed</option>
+  </select>
+
   <button id="btn-export" style="padding:6px 10px;border:1px solid #d1d5db;background:#f0f9ff;border-radius:8px;cursor:pointer">导出 CSV</button>
 
   <button id="btn-seed" class="btn">写入示例数据</button>
@@ -163,14 +182,25 @@ fetch(`/health?${qs1}`)
     hEl.style.borderColor = '#ffb3b3';
   });
 
-// 导出 CSV（读取输入框关键词，拼到 ?q=）
+// 导出 CSV：把下拉转为精确语法，并与关键词一起拼成 q
 const btnExport = document.getElementById('btn-export');
 if (btnExport) btnExport.onclick = () => {
-  const qEl = document.getElementById('hist-q');
-  const q   = qEl ? (qEl.value || '').trim() : '';
-  const certQS = new URLSearchParams({ cert_id: cert });
-  if (q) certQS.append('q', q);
-  window.open('/api/receipts/export?' + certQS.toString(), '_blank');
+  const qEl   = document.getElementById('hist-q');
+  const prov  = (document.getElementById('sel-provider')?.value || '').trim();
+  const stat  = (document.getElementById('sel-status')?.value   || '').trim();
+
+  const parts = [];
+  if (prov) parts.push(`provider:${prov}`);
+  if (stat) parts.push(`status:${stat}`);
+  const free = qEl ? (qEl.value || '').trim() : '';
+  if (free) parts.push(free);
+
+  const qs = new URLSearchParams({ cert_id: cert });
+  if (parts.length) qs.set('q', parts.join(' '));
+  // 加时间戳避免浏览器缓存
+  qs.set('t', Date.now().toString());
+
+  window.open('/api/receipts/export?' + qs.toString(), '_blank');
 };
 
   // 健康条自动刷新（5s）
