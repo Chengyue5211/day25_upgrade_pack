@@ -356,10 +356,22 @@ def ci_chain_mock(cert_id: str = Query("demo-cert")):
     return {"ok": True, "cert_id": cert_id, "tx": item["txid"]}
 
 @app.get("/api/receipts/export")
-def ci_export_csv(cert_id: str = Query("demo-cert")):
+def ci_export_csv(cert_id: str = Query("demo-cert"), q: str = Query("", description="按包含过滤 provider/status/txid/created_at")):
     import io, csv
     receipts = getattr(app.state, "receipts", {}) or {}
     rows = receipts.get(cert_id, []) if isinstance(receipts, dict) else []
+
+    q_norm = (q or "").strip().lower()
+    if q_norm:
+        def hit(r):
+            fields = [
+                str(r.get("provider", "")),
+                str(r.get("status", "")),
+                str(r.get("txid", "")),
+                str(r.get("time", "")),
+            ]
+            return any(q_norm in f.lower() for f in fields)
+        rows = [r for r in rows if hit(r)]
 
     def gen():
         out = io.StringIO()
@@ -369,7 +381,6 @@ def ci_export_csv(cert_id: str = Query("demo-cert")):
             w.writerow([cert_id, r.get("provider"), r.get("status"), r.get("txid"), r.get("time")])
         yield out.getvalue()
 
-    # ✅ 改成先构造 response，再设置 Content-Disposition 头
     from fastapi.responses import StreamingResponse
     resp = StreamingResponse(gen(), media_type="text/csv; charset=utf-8")
     resp.headers["Content-Disposition"] = f'attachment; filename="receipts_{cert_id}.csv"'
