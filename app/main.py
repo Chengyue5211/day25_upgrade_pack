@@ -126,64 +126,85 @@ try:
 except NameError:
     from fastapi import FastAPI
     app = FastAPI(title="verify-upgrade (CI)")
+# --- 放在 app = FastAPI(...) 之后的任意位置（与其它路由相邻） ---
+from fastapi import Query
+from typing import List
+
+def _ensure_state(app):
+    if not hasattr(app.state, "receipts"):
+        app.state.receipts = {}
+
+def _match_query(item: dict, q: str) -> bool:
+    # 支持 provider:xxx status:xxx 以及任意子串匹配
+    if not q: 
+        return True
+    terms = q.split()
+    for t in terms:
+        if ":" in t:
+            k, v = t.split(":", 1)
+            if (item.get(k) or "").lower() != v.lower():
+                return False
+        else:
+            blob = " ".join([str(item.get(k,"")) for k in ("cert_id","provider","status","txid")])
+            if t.lower() not in blob.lower():
+                return False
+    return True
+
+@app.get("/api/receipts/count")
+def receipts_count(
+    cert_id: str = Query(..., min_length=1),
+    q: str = Query("", description="provider:tsa status:pending 等语法")
+):
+    _ensure_state(app)
+    rows: List[dict] = app.state.receipts.get(cert_id, [])
+    matched = [r for r in rows if _match_query(r, q)]
+    return {"ok": True, "count": len(matched)}
 # —— end ensure ——
 
 from datetime import datetime
 from pathlib import Path
 import os
+
+@app.get("/api/receipts/preview")
+def receipts_preview(
+    cert_id: str = Query(..., min_length=1),
+    q: str = Query("", description="provider:tsa status:pending 等语法"),
+    limit: int = Query(20, ge=1, le=200)
+):
+    _ensure_state(app)
+    rows = app.state.receipts.get(cert_id, [])
+    rows = [r for r in rows if _match_query(r, q)]
+    # 统一输出 created_at 字段名，便于前端展示
+    view = [
+        {
+            "cert_id": cert_id,
+            "provider": r.get("provider"),
+            "status": r.get("status"),
+            "txid": r.get("txid"),
+            "created_at": r.get("time"),
+        }
+        for r in rows[:limit]
+    ]
+    return {"ok": True, "total": len(rows), "limit": limit, "rows": view}
+
+
 @app.get("/health")
 def health(cert_id: str = Query(None)):
-    try:
-        from pathlib import Path
-        import os, sqlite3 as _sqlite
-        base = Path(__file__).resolve().parent
-
-        # 正确检测 data/verify_upgrade.db
-        db_path = os.path.join("data", "verify_upgrade.db")
-        sqlite_exists = os.path.exists(db_path)
-
-        # receipts 兜底（内存）
-        receipts = getattr(app.state, "receipts", {}) or {}
-        if not isinstance(receipts, dict):
-            receipts = {}
-
-        # 若能从 DB 统计，就用 DB；否则回退内存
+    base = Path(__file__).resolve().parent
+    sqlite_exists = (base / "db.sqlite").exists() or (base.parent / "db.sqlite").exists()
+    receipts = getattr(app.state, "receipts", {}) or {}
+    if isinstance(receipts, dict):
+        receipts_count = len(receipts.get(cert_id, [])) if cert_id else sum(len(v) for v in receipts.values())
+    else:
         receipts_count = 0
-        db_counted = False
-        if sqlite_exists and cert_id:
-            try:
-                conn = _sqlite.connect(db_path)
-                try:
-                    row = conn.execute(
-                        "SELECT COUNT(*) FROM receipts WHERE cert_id=?",
-                        (cert_id,)
-                    ).fetchone()
-                    if row and isinstance(row[0], (int,)):
-                        receipts_count = int(row[0])
-                        db_counted = True
-                finally:
-                    conn.close()
-            except Exception:
-                pass
-
-        if not db_counted:
-            receipts_count = (len(receipts.get(cert_id, []))
-                              if cert_id else sum(len(v) for v in receipts.values()))
-
-        import datetime as _dt
-        now_iso = _dt.datetime.now(_dt.UTC).isoformat()
-
-        return {
-            "ok": True,
-            "service": "verify-upgrade",
-            "time": now_iso,
-            "port": 8011,
-            "db": {"sqlite_exists": sqlite_exists, "receipts_count": receipts_count},
-            "config": {"tsa_endpoint": os.getenv("TSA_ENDPOINT", "")},
-        }
-    except Exception as e:
-        return {"ok": False, "error": _safe_err(e), "service": "verify-upgrade"}
-
+    return {
+        "ok": True,
+        "service": "verify-upgrade",
+        "time": datetime.utcnow().isoformat() + "Z",
+        "port": 8011,
+        "db": {"sqlite_exists": sqlite_exists, "receipts_count": receipts_count},
+        "config": {"tsa_endpoint": os.getenv("TSA_ENDPOINT", "")},
+    }
 @app.get("/verify_upgrade/{cert_id}", response_class=HTMLResponse)
 def verify_upgrade_page(cert_id: str, request: Request):
     """
@@ -191,7 +212,8 @@ def verify_upgrade_page(cert_id: str, request: Request):
     若不存在或失败，则回退到 get_* 函数；所有分支都有兜底。
     """
     ctx = {
-         "cert_id": cert_id,
+        "request": request,
+        "cert_id": cert_id,
         "tsa_last_status": None,
         "tsa_last_txid": None,
         "history": [],
@@ -313,7 +335,7 @@ def verify_upgrade_page(cert_id: str, request: Request):
         except Exception:
             pass
 
-    return templates.TemplateResponse(request, "verify_upgrade.html", ctx)
+    return templates.TemplateResponse("verify_upgrade.html", ctx)
 
 @app.get("/api/tsa/config")
 def ci_tsa_config():
@@ -351,6 +373,7 @@ def _maybe_write_sqlite(cert_id: str, item: dict):
 # ===== 工具函数结束 =====
 
 # ===== 端点从这里开始 =====
+ 
 @app.get("/api/tsa/mock")
 def ci_tsa_mock(cert_id: str = Query("demo-cert")):
     item = {
@@ -359,8 +382,8 @@ def ci_tsa_mock(cert_id: str = Query("demo-cert")):
         "txid":     _gen_txid("0xTX_TSA_OK_"),
         "time":     _now_str(),
     }
-    _append_receipt(app, cert_id, item)
-    _maybe_write_sqlite(cert_id, item)
+    _append_receipt(app, cert_id, item)   # 写入内存
+    _maybe_write_sqlite(cert_id, item)    # 如有 data/verify_upgrade.db 就补写
     return {"ok": True, "cert_id": cert_id, "tx": item["txid"]}
 
 @app.get("/api/chain/mock")
@@ -376,314 +399,36 @@ def ci_chain_mock(cert_id: str = Query("demo-cert")):
     return {"ok": True, "cert_id": cert_id, "tx": item["txid"]}
 
 @app.get("/api/receipts/export")
-def ci_export_csv(
-    cert_id: str = Query("demo-cert"),
-    q: str = Query("", description="精确筛选 provider:/status:/tx: 可与关键词混用")
-):
-    import io, csv, os, sqlite3
-    from fastapi.responses import Response
+def ci_export_csv(cert_id: str = Query("demo-cert"), q: str = Query("", description="同 preview/count 语法")):
+    _ensure_state(app)
+    rows = app.state.receipts.get(cert_id, [])
+    rows = [r for r in rows if _match_query(r, q)]
 
-    # --- 解析 q：精确筛选 + 普通关键词 ---
-    raw = (q or "").strip()
-    tokens = [t for t in raw.split() if t]
-    filters = {"provider": [], "status": [], "tx": []}
-    terms: list[str] = []
-    for t in tokens:
-        if ":" in t:
-            k, v = t.split(":", 1)
-            k = k.lower().strip()
-            v = v.strip()
-            if k in filters and v:
-                filters[k].append(v.lower())
-            else:
-                terms.append(t.lower())
-        else:
-            terms.append(t.lower())
+    def gen():
+        out = io.StringIO()
+        w = csv.writer(out)
+        w.writerow(["cert_id", "provider", "status", "txid", "created_at"])
+        for r in rows:
+            w.writerow([cert_id, r.get("provider"), r.get("status"), r.get("txid"), r.get("time")])
+        yield "\ufeff" + out.getvalue()  # UTF-8 BOM，Excel 友好
 
-    def _hit(r: dict) -> bool:
-        # 普通关键词（包含匹配，任一字段命中即可）
-        if terms:
-            fields = [
-                str(r.get("provider", "")),
-                str(r.get("status", "")),
-                str(r.get("txid", "")),
-                str(r.get("time", "")),
-            ]
-            if not any(any(term in f.lower() for f in fields) for term in terms):
-                return False
-        # 精确筛选（全部满足）
-        if filters["provider"] and str(r.get("provider","")).lower() not in filters["provider"]:
-            return False
-        if filters["status"] and str(r.get("status","")).lower() not in filters["status"]:
-            return False
-        if filters["tx"] and not any(v in str(r.get("txid","")).lower() for v in filters["tx"]):
-            return False
-        return True
+    resp = StreamingResponse(gen(), media_type="text/csv; charset=utf-8")
+    resp.headers["Content-Disposition"] = f'attachment; filename="receipts_{cert_id}.csv"'
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
 
-    # --- 先读 DB，再叠加内存，去重 ---
-    rows: list[dict] = []
-    db_path = os.path.join("data", "verify_upgrade.db")
-    if os.path.exists(db_path):
-        try:
-            conn = sqlite3.connect(db_path)
-            try:
-                cur = conn.execute(
-                    "SELECT provider,status,txid,created_at FROM receipts WHERE cert_id=? ORDER BY id ASC",
-                    (cert_id,)
-                )
-                rows.extend({"provider":p,"status":s,"txid":t,"time":str(c)} for (p,s,t,c) in cur.fetchall() or [])
-            finally:
-                conn.close()
-        except Exception:
-            pass
-
-    mem = (getattr(app.state, "receipts", {}) or {}).get(cert_id, [])
-    if isinstance(mem, list):
-        rows.extend(mem)
-
-    seen, uniq = set(), []
-    for r in rows:
-        key = (r.get("txid"), r.get("provider"), r.get("status"), r.get("time"))
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append(r)
-    rows = uniq
-
-    # --- 应用筛选 ---
-    if tokens:
-        rows = [r for r in rows if _hit(r)]
-
-    # --- 构造 CSV（BOM + 文本时间到秒）---
-    out = io.StringIO(newline="")
-    w = csv.writer(out)
-    w.writerow(["cert_id", "provider", "status", "txid", "created_at"])
-    for r in rows:
-        created = "'" + ((r.get("time") or "").replace("T", " ")[:19])
-        w.writerow([cert_id, r.get("provider"), r.get("status"), r.get("txid"), created])
-    csv_bytes = ("\ufeff" + out.getvalue()).encode("utf-8")
-
-    # --- 禁缓存 + 文件名携带原始查询后缀 ---
-    suffix = raw.lower().replace(" ", "_")
-    fname = f'receipts_{cert_id}{("_"+suffix) if suffix else ""}.csv'
-    headers = {
-        "Content-Disposition": f'attachment; filename="{fname}"',
-        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-        "Pragma": "no-cache",
-        "Expires": "0",
-    }
-    return Response(content=csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)
-@app.get("/api/receipts/count")
-def count_receipts(
-    cert_id: str = Query("demo-cert"),
-    q: str = Query("", description="精确筛选 provider:/status:/tx: 可与关键词混用")
-):
-    import os, sqlite3
-
-    # --- 解析 q：精确筛选 + 普通关键词 ---
-    raw = (q or "").strip()
-    tokens = [t for t in raw.split() if t]
-    filters = {"provider": [], "status": [], "tx": []}
-    terms: list[str] = []
-    for t in tokens:
-        if ":" in t:
-            k, v = t.split(":", 1)
-            k = k.lower().strip()
-            v = v.strip()
-            if k in filters and v:
-                filters[k].append(v.lower())
-            else:
-                terms.append(t.lower())
-        else:
-            terms.append(t.lower())
-
-    def _hit(r: dict) -> bool:
-        # 普通关键词（包含匹配）
-        if terms:
-            fields = [
-                str(r.get("provider", "")),
-                str(r.get("status", "")),
-                str(r.get("txid", "")),
-                str(r.get("time", "")),
-            ]
-            if not any(any(term in f.lower() for f in fields) for term in terms):
-                return False
-        # 精确筛选（全部满足）
-        if filters["provider"] and str(r.get("provider","")).lower() not in filters["provider"]:
-            return False
-        if filters["status"] and str(r.get("status","")).lower() not in filters["status"]:
-            return False
-        if filters["tx"] and not any(v in str(r.get("txid","")).lower() for v in filters["tx"]):
-            return False
-        return True
-
-    # --- 先读 DB，再叠加内存 ---
-    rows: list[dict] = []
-    db_path = os.path.join("data", "verify_upgrade.db")
-    if os.path.exists(db_path):
-        try:
-            conn = sqlite3.connect(db_path)
-            try:
-                cur = conn.execute(
-                    "SELECT provider,status,txid,created_at FROM receipts WHERE cert_id=? ORDER BY id ASC",
-                    (cert_id,)
-                )
-                rows.extend({"provider":p,"status":s,"txid":t,"time":str(c)} for (p,s,t,c) in cur.fetchall() or [])
-            finally:
-                conn.close()
-        except Exception:
-            pass
-
-    mem = (getattr(app.state, "receipts", {}) or {}).get(cert_id, [])
-    if isinstance(mem, list):
-        rows.extend(mem)
-
-    # --- 去重 ---
-    seen, uniq = set(), []
-    for r in rows:
-        key = (r.get("txid"), r.get("provider"), r.get("status"), r.get("time"))
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append(r)
-
-    # --- 过滤并计数 ---
-    if tokens:
-        uniq = [r for r in uniq if _hit(r)]
-
-    return {"ok": True, "count": len(uniq)}
-
-@app.get("/api/receipts/preview")
-def preview_receipts(
-    cert_id: str = Query("demo-cert"),
-    q: str = Query("", description="精确筛选 provider:/status:/tx: 可与关键词混用"),
-    limit: int = Query(20, ge=1, le=200)
-):
-    import os, sqlite3
-
-    # --- 解析 q（与 export/count 相同） ---
-    raw = (q or "").strip()
-    tokens = [t for t in raw.split() if t]
-    filters = {"provider": [], "status": [], "tx": []}
-    terms: list[str] = []
-    for t in tokens:
-        if ":" in t:
-            k, v = t.split(":", 1)
-            k = k.lower().strip()
-            v = v.strip()
-            if k in filters and v:
-                filters[k].append(v.lower())
-            else:
-                terms.append(t.lower())
-        else:
-            terms.append(t.lower())
-
-    def _hit(r: dict) -> bool:
-        if terms:
-            fields = [
-                str(r.get("provider", "")),
-                str(r.get("status", "")),
-                str(r.get("txid", "")),
-                str(r.get("time", "")),
-            ]
-            if not any(any(term in f.lower() for f in fields) for term in terms):
-                return False
-        if filters["provider"] and str(r.get("provider","")).lower() not in filters["provider"]:
-            return False
-        if filters["status"] and str(r.get("status","")).lower() not in filters["status"]:
-            return False
-        if filters["tx"] and not any(v in str(r.get("txid","")).lower() for v in filters["tx"]):
-            return False
-        return True
-
-    # --- 先读 DB，再叠加内存 ---
-    rows: list[dict] = []
-    db_path = os.path.join("data", "verify_upgrade.db")
-    if os.path.exists(db_path):
-        try:
-            conn = sqlite3.connect(db_path)
-            try:
-                cur = conn.execute(
-                    "SELECT provider,status,txid,created_at FROM receipts WHERE cert_id=? ORDER BY id ASC",
-                    (cert_id,)
-                )
-                rows.extend({"provider":p,"status":s,"txid":t,"time":str(c)} for (p,s,t,c) in cur.fetchall() or [])
-            finally:
-                conn.close()
-        except Exception:
-            pass
-
-    mem = (getattr(app.state, "receipts", {}) or {}).get(cert_id, [])
-    if isinstance(mem, list):
-        rows.extend(mem)
-
-    # --- 去重 ---
-    seen, uniq = set(), []
-    for r in rows:
-        key = (r.get("txid"), r.get("provider"), r.get("status"), r.get("time"))
-        if key in seen: 
-            continue
-        seen.add(key); uniq.append(r)
-
-    # --- 过滤 & 统计 & 截断 ---
-    if tokens:
-        uniq = [r for r in uniq if _hit(r)]
-    total = len(uniq)
-    head = uniq[:limit]
-
-    # 统一字段名，方便前端渲染
-    preview = [
-        {
-            "cert_id": cert_id,
-            "provider": r.get("provider"),
-            "status":   r.get("status"),
-            "txid":     r.get("txid"),
-            "created_at": str(r.get("time") or "")
-        } for r in head
-    ]
-    return {"ok": True, "total": total, "limit": limit, "rows": preview}
- 
 @app.post("/api/receipts/clear")
-def clear_receipts(request: Request, cert_id: str = Query("")):
-    app = request.app
-    cleared_mem = 0
-    cleared_db = 0
-
-    # 清内存
-    if not hasattr(app.state, "receipts") or not isinstance(app.state.receipts, dict):
-        app.state.receipts = {}
-    if cert_id:
-        lst = app.state.receipts.get(cert_id, [])
-        cleared_mem = len(lst)
-        app.state.receipts[cert_id] = []
-    else:
-        cleared_mem = sum(len(v) for v in app.state.receipts.values())
-        app.state.receipts = {}
-
-    # 清 DB（若存在）
-    try:
-        import os, sqlite3
-        db_path = os.path.join("data", "verify_upgrade.db")
-        if os.path.exists(db_path):
-            conn = sqlite3.connect(db_path)
-            try:
-                if cert_id:
-                    res = conn.execute("DELETE FROM receipts WHERE cert_id=?", (cert_id,))
-                else:
-                    res = conn.execute("DELETE FROM receipts")  # 谨慎使用：全清
-                conn.commit()
-                cleared_db = res.rowcount or 0
-            finally:
-                conn.close()
-    except Exception:
-        pass
-
-    return {"ok": True, "cleared": cleared_mem + cleared_db}
-
-@app.get("/favicon.ico")
-def favicon():
-    import base64, io
-    from fastapi.responses import StreamingResponse
-    data = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABJf6rWQAAAABJRU5ErkJggg==")
-    return StreamingResponse(io.BytesIO(data), media_type="image/png")
+def ci_clear(cert_id: str = Query(None)):
+    _ensure_state(app)
+    r = app.state.receipts
+    cleared = 0
+    if isinstance(r, dict):
+        if cert_id:
+            cleared = len(r.get(cert_id, []))
+            r[cert_id] = []
+        else:
+            cleared = sum(len(v) for v in r.values())
+            app.state.receipts = {}
+    return {"ok": True, "cleared": cleared}
+# ===== end CI fallback =====
 
