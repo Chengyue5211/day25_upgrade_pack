@@ -18,6 +18,11 @@
     .status-success{color:#166534;font-weight:600}
     .status-failed{color:#991b1b;font-weight:600}
     .status-pending{color:#92400e;font-weight:600}
+    .btn.btn-xs{ padding:2px 6px; font-size:12px; border-radius:6px; }
+    .highlight-copy{ background:#fffbe6 !important; transition: background .6s ease; }
+    #pv-body td:nth-child(4){ font-family:ui-monospace, Menlo, Consolas, monospace; }
+    #pv-body td{ white-space:nowrap; vertical-align:middle; }
+    #btn-export[disabled]{ cursor:not-allowed; }
   </style>
 </head>
 <body>
@@ -45,7 +50,15 @@
          else 'pending' %}
         <span class="status-{{ st }}">{{ last_status }}</span>
       </p>
-      <p>TX：{% if last_txid %}<code>{{ last_txid }}</code>{% else %}<span class="muted">无</span>{% endif %}</p>
+      <p>TX：
+{% if last_txid %}
+  <code>{{ last_txid|e }}</code>
+  <button class="btn btn-xs" data-copy-txid="{{ last_txid }}" aria-label="复制 txid">复制</button>
+{% else %}
+  <span class="muted">无</span>
+{% endif %}
+</p>
+
     {% else %}
       <p class="muted">暂无回执。请先调用 TSA/Chain 回执接口。</p>
     {% endif %}
@@ -65,7 +78,11 @@
             <span class="badge {{ 'badge-tsa' if provider=='tsa' else 'badge-chain' }}">{{ provider|default('unknown') }}</span>
             {% set map = {'ok':'success','success':'success','failed':'failed','error':'failed','pending':'pending'} %}
             · <span class="status-{{ map.get((status or '')|lower, 'pending') }}">{{ status|default('pending') }}</span>
-            {% if txid %} · TX: <code>{{ txid }}</code>{% endif %}
+    {% if txid %}
+        · TX: <code>{{ txid|e }}</code>
+        <button class="btn btn-xs" data-copy-txid="{{ txid }}" aria-label="复制 txid">复制</button>
+{% endif %}
+
           </li>
         {% endfor %}
       </ul>
@@ -109,69 +126,95 @@
   <select id="sel-status" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:8px">
     <option value="">All</option><option value="ok">ok</option><option value="pending">pending</option><option value="failed">failed</option>
   </select>
-<button id="btn-export" style="padding:6px 10px;border:1px solid #d1d5db;background:#f0f9ff;border-radius:8px;cursor:pointer">导出 CSV</button>
-<span id="export-hint" style="font-size:12px;color:#6b7280;">（预计：-- 条）</span>
 <button id="btn-seed" class="btn">写入示例数据</button>
 <span id="quick-msg" style="color:#6b7280;font-size:12px;margin-left:6px"></span>
-
 </div>
 
 <div id="health-tip" style="margin-top:10px;padding:8px 12px;border:1px solid #eee;border-radius:8px;font-size:13px;background:#fafafa">正在读取健康信息…</div>
 
 <script>
 (()=> {
-const cert = "{{ cert_id|default('') }}";
-const msg  = s => { const el = document.getElementById('quick-msg'); if (el) el.textContent = s || ''; };
+  'use strict';
 
-// —— 筛选项本地记忆（按 cert 作用域）——
-const _memKey = (name) => `vu:${cert}:filter:${name}`;
+  const cert = "{{ cert_id|default('') }}";
+  const msg  = s => { const el = document.getElementById('quick-msg'); if (el) el.textContent = s || ''; };
 
-function loadFilters() {
-  try {
-    const q = localStorage.getItem(_memKey('q')) ?? '';
-    const provider = localStorage.getItem(_memKey('provider')) ?? '';
-    const status   = localStorage.getItem(_memKey('status')) ?? '';
-    const qEl   = document.getElementById('hist-q');
-    const pEl   = document.getElementById('sel-provider');
-    const sEl   = document.getElementById('sel-status');
-    if (qEl) qEl.value = q;
-    if (pEl) pEl.value = provider;
-    if (sEl) sEl.value = status;
-  } catch {}
-}
+  // ===== 工具函数区 =====
+  function escHtml(s){
+    return String(s)
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#39;');
+  }
 
-function saveFilters() {
-  try {
-    const qEl   = document.getElementById('hist-q');
-    const pEl   = document.getElementById('sel-provider');
-    const sEl   = document.getElementById('sel-status');
-    if (qEl) localStorage.setItem(_memKey('q'), qEl.value || '');
-    if (pEl) localStorage.setItem(_memKey('provider'), (pEl.value || ''));
-    if (sEl) localStorage.setItem(_memKey('status'),   (sEl.value || ''));
-  } catch {}
-}
+  function flashNode(el){
+    if(!el) return;
+    el.classList.add('highlight-copy');
+    setTimeout(()=> el.classList.remove('highlight-copy'), 700);
+  }
 
-  // 刷新
+  function debounce(fn, ms = 200){
+    let t;
+    return (...args) => {
+      clearTimeout(t);
+      t = setTimeout(() => fn(...args), ms);
+    };
+  }  // ← 结束 debounce
+
+  let __countReqId = 0;  // 计数请求序号（用于丢弃过期响应）
+  // ===== 工具函数区结束 =====
+
+  // —— 筛选项本地记忆（按 cert 作用域）——
+  const _memKey = (name) => `vu:${cert}:filter:${name}`;
+
+  function loadFilters() {
+    try {
+      const q = localStorage.getItem(_memKey('q')) ?? '';
+      const provider = localStorage.getItem(_memKey('provider')) ?? '';
+      const status   = localStorage.getItem(_memKey('status')) ?? '';
+      const qEl   = document.getElementById('hist-q');
+      const pEl   = document.getElementById('sel-provider');
+      const sEl   = document.getElementById('sel-status');
+      if (qEl) qEl.value = q;
+      if (pEl) pEl.value = provider;
+      if (sEl) sEl.value = status;
+    } catch (e) {}
+  }
+
+  function saveFilters() {
+    try {
+      const qEl   = document.getElementById('hist-q');
+      const pEl   = document.getElementById('sel-provider');
+      const sEl   = document.getElementById('sel-status');
+      if (qEl) localStorage.setItem(_memKey('q'), qEl.value || '');
+      if (pEl) localStorage.setItem(_memKey('provider'), (pEl.value || ''));
+      if (sEl) localStorage.setItem(_memKey('status'),   (sEl.value || ''));
+    } catch (e) {}
+  }
+
+  // 刷新按钮
   const btnRefresh = document.getElementById('btn-refresh');
   if (btnRefresh) btnRefresh.onclick = () =>
     location.replace(location.pathname + '?t=' + Date.now());
 
-  // 清空
-const btnClear = document.getElementById('btn-clear');
-if (btnClear) btnClear.onclick = () => {
-  fetch(`/api/receipts/clear?cert_id=${encodeURIComponent(cert)}`, { method: 'POST' })
-    .then(r => r.json())
-    .then(async d => {
-      msg(`已清空 ${d.cleared || 0} 条`);
-      const h = await fetch('/health?' + new URLSearchParams({ cert_id: cert })).then(r => r.json());
-      renderHealth(h);
-      updateExportHint();
-      setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 200);
-    })
-    .catch(() => msg('清空失败，请重试'));
-};
+  // 清空（单证书）
+  const btnClear = document.getElementById('btn-clear');
+  if (btnClear) btnClear.onclick = () => {
+    fetch(`/api/receipts/clear?cert_id=${encodeURIComponent(cert)}`, { method: 'POST' })
+      .then(r => r.json())
+      .then(async d => {
+        msg(`已清空 ${d.cleared || 0} 条`);
+        const h = await fetch('/health?' + new URLSearchParams({ cert_id: cert })).then(r => r.json());
+        renderHealth(h);
+        updateExportHint();
+        setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 200);
+      })
+      .catch(() => msg('清空失败，请重试'));
+  };
 
-  // 一键写入示例数据：tsa ok + chain pending
+  // 一键写入示例数据
   const seedBtn = document.getElementById('btn-seed');
   if (seedBtn) {
     let busy = false;
@@ -183,7 +226,7 @@ if (btnClear) btnClear.onclick = () => {
           fetch(`/api/chain/mock?cert_id=${encodeURIComponent(cert)}`)
         ]);
         msg('已写入示例数据 2 条');
-        updateExportHint();   // ← 新增：写入后马上刷新“预计条数”
+        updateExportHint();
         setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 250);
       } catch (e) {
         msg('写入失败，请重试');
@@ -192,37 +235,37 @@ if (btnClear) btnClear.onclick = () => {
       }
     };
   }
-// 清空所有 cert（仅本机显示 + 二次确认）
-const btnClearAll = document.getElementById('btn-clear-all');
-if (btnClearAll) {
-  const isLocal = (location.hostname === '127.0.0.1' || location.hostname === 'localhost');
-  if (isLocal) btnClearAll.style.display = 'inline-block';
 
-  btnClearAll.onclick = async () => {
-    if (!isLocal) return; // 保险
-    if (!confirm('⚠️ 将清空【所有证书】的历史记录（内存 + DB）。确定继续？')) return;
-    const text = prompt('第二步确认：请输入 DELETE');
-    if ((text || '').trim().toUpperCase() !== 'DELETE') { msg('已取消'); return; }
+  // 清空所有（仅本机显示 + 二次确认）
+  const btnClearAll = document.getElementById('btn-clear-all');
+  if (btnClearAll) {
+    const isLocal = (location.hostname === '127.0.0.1' || location.hostname === 'localhost');
+    if (isLocal) btnClearAll.style.display = 'inline-block';
 
-    try {
-      btnClearAll.disabled = true;
-      const res = await fetch('/api/receipts/clear', { method: 'POST' }); // 不带 cert_id => 全清
-      const d = await res.json();
-      msg(`已清空所有：${d.cleared || 0} 条`);
-      // 立即刷新健康条 & 页面
-      const h = await fetch('/health?' + new URLSearchParams({ cert_id: cert })).then(r=>r.json());
-      renderHealth(h);
-      updateExportHint();   
-      setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 300);
-    } catch {
-      msg('清空失败，请重试');
-    } finally {
-      btnClearAll.disabled = false;
-    }
-  };
-}
+    btnClearAll.onclick = async () => {
+      if (!isLocal) return;
+      if (!confirm('⚠️ 将清空【所有证书】的历史记录（内存 + DB）。确定继续？')) return;
+      const text = prompt('第二步确认：请输入 DELETE');
+      if ((text || '').trim().toUpperCase() !== 'DELETE') { msg('已取消'); return; }
 
-  // 健康提示条渲染
+      try {
+        btnClearAll.disabled = true;
+        const res = await fetch('/api/receipts/clear', { method: 'POST' }); // 不带 cert_id => 全清
+        const d = await res.json();
+        msg(`已清空所有：${d.cleared || 0} 条`);
+        const h = await fetch('/health?' + new URLSearchParams({ cert_id: cert })).then(r=>r.json());
+        renderHealth(h);
+        updateExportHint();
+        setTimeout(() => location.replace(location.pathname + '?t=' + Date.now()), 300);
+      } catch (e) {
+        msg('清空失败，请重试');
+      } finally {
+        btnClearAll.disabled = false;
+      }
+    };
+  }
+
+  // 健康提示条
   const hEl = document.getElementById('health-tip');
   function renderHealth(d){
     const ok = d.ok !== false;
@@ -234,161 +277,184 @@ if (btnClearAll) {
     hEl.style.borderColor = ok ? '#b7f7c2' : '#ffb3b3';
   }
 
-  // 首次加载
-const qs1 = new URLSearchParams({ cert_id: cert }).toString();
-fetch(`/health?${qs1}`)
-  .then(r => r.json())
-  .then(renderHealth)
-  .catch(() => {
-    hEl.textContent = '获取健康信息失败（可能服务未运行或路径错误）';
-    hEl.style.background = '#fff5f5';
-    hEl.style.borderColor = '#ffb3b3';
-  });
-
-// 导出 CSV：把下拉转为精确语法，并与关键词一起拼成 q
-const btnExport = document.getElementById('btn-export');
-if (btnExport) btnExport.onclick = () => {
-  updateExportHint(); // 点击导出前先刷新“预计条数”提示（异步，不影响下载）
-
-  const qEl   = document.getElementById('hist-q');
-  const prov  = (document.getElementById('sel-provider')?.value || '').trim();
-  const stat  = (document.getElementById('sel-status')?.value   || '').trim();
-
-  const parts = [];
-  if (prov) parts.push(`provider:${prov}`);
-  if (stat) parts.push(`status:${stat}`);
-  const free = qEl ? (qEl.value || '').trim() : '';
-  if (free) parts.push(free);
-
-  const qs = new URLSearchParams({ cert_id: cert });
-  if (parts.length) qs.set('q', parts.join(' '));
-  // 加时间戳避免浏览器缓存
-  qs.set('t', Date.now().toString());
-
-  window.open('/api/receipts/export?' + qs.toString(), '_blank');
-};
-
-  // 健康条自动刷新（5s）
-setInterval(() => {
-    const qs2 = new URLSearchParams({ cert_id: cert }).toString();
-    fetch(`/health?${qs2}`)
-       .then(r => r.json())
-       .then(renderHealth)
-      .catch(()=>{});
+  const qs1 = new URLSearchParams({ cert_id: cert }).toString();
+  fetch(`/health?${qs1}`).then(r => r.json()).then(renderHealth).catch(()=>{});
+  setInterval(() => {
+    fetch(`/health?${qs1}`).then(r => r.json()).then(renderHealth).catch(()=>{});
   }, 5000);
-// === 导出前“预计条数 N”辅助 ===
-function buildQueryParts(){
-  const qEl = document.getElementById('hist-q');
-  const prov = (document.getElementById('sel-provider')?.value || '').trim();
-  const stat = (document.getElementById('sel-status')?.value || '').trim();
-  const parts = [];
-  if (prov) parts.push(`provider:${prov}`);
-  if (stat) parts.push(`status:${stat}`);
-  const free = qEl ? (qEl.value || '').trim() : '';
-  if (free) parts.push(free);
-  return parts;
-}
 
-async function updateExportHint(){
-  const hintEl = document.getElementById('export-hint');
-  if (!hintEl) return;
-  try {
-    const parts = buildQueryParts();
-    const qs = new URLSearchParams({ cert_id: String(cert), t: Date.now().toString() });
-    if (parts.length) qs.set('q', parts.join(' '));   // 精确语法 + 关键词
-    const d = await fetch('/api/receipts/count?' + qs).then(r => r.json());
-    const n = (d && d.ok && typeof d.count === 'number') ? d.count : 0;
-    hintEl.textContent = `（预计：${n} 条）`;  // 现在是精确计数
-  } catch {
-    const hintEl2 = document.getElementById('export-hint');
-    if (hintEl2) hintEl2.textContent = '（预计：--）';
+  // 导出 CSV
+  const btnExport = document.getElementById('btn-export');
+  if (btnExport) btnExport.onclick = () => {
+    updateExportHint(); // 点击导出前先刷新提示
+    const qEl   = document.getElementById('hist-q');
+    const prov  = (document.getElementById('sel-provider')?.value || '').trim();
+    const stat  = (document.getElementById('sel-status')?.value   || '').trim();
+
+    const parts = [];
+    if (prov) parts.push(`provider:${prov}`);
+    if (stat) parts.push(`status:${stat}`);
+    const free = qEl ? (qEl.value || '').trim() : '';
+    if (free) parts.push(free);
+
+    const qs = new URLSearchParams({ cert_id: cert });
+    if (parts.length) qs.set('q', parts.join(' '));
+    qs.set('t', Date.now().toString());
+    window.open('/api/receipts/export?' + qs.toString(), '_blank');
+  };
+
+  // 构建查询
+  function buildQueryParts(){
+    const qEl = document.getElementById('hist-q');
+    const prov = (document.getElementById('sel-provider')?.value || '').trim();
+    const stat = (document.getElementById('sel-status')?.value || '').trim();
+    const parts = [];
+    if (prov) parts.push(`provider:${prov}`);
+    if (stat) parts.push(`status:${stat}`);
+    const free = qEl ? (qEl.value || '').trim() : '';
+    if (free) parts.push(free);
+    return parts;
   }
-}
 
-// 输入/下拉改变时更新提示；初次进来也估算一次
-['hist-q','sel-provider','sel-status'].forEach(id => {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const handler = () => { saveFilters(); updateExportHint(); };
-  el.addEventListener('input',  handler);
-  el.addEventListener('change', handler);
-});
+  // 精确计数（防抖 + 防并发）
+  async function updateExportHint(){
+    const hintEl = document.getElementById('export-hint');
+    if (!hintEl) return;
+    try {
+      const reqId = ++__countReqId;
+      const parts = buildQueryParts();
+      const qs = new URLSearchParams({ cert_id: String(cert), t: Date.now().toString() });
+      if (parts.length) qs.set('q', parts.join(' '));
+      const d = await fetch('/api/receipts/count?' + qs).then(r => r.json());
+      if (reqId !== __countReqId) return;  // 丢弃过期结果
+      const n = (d && d.ok && typeof d.count === 'number') ? d.count : 0;
+      hintEl.textContent = `（预计：${n} 条）`;
+      const btn = document.getElementById('btn-export');
+      if (btn){ btn.disabled = n <= 0; btn.style.opacity = n > 0 ? 1 : 0.5; }
+    } catch (e) {
+      const hintEl2 = document.getElementById('export-hint');
+      if (hintEl2) hintEl2.textContent = '（预计：--）';
+    }
+  }
 
-loadFilters();  
-updateExportHint();  
-// —— 简易预览对话框 —— //
-function showPreviewDialog(data){
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:9999;';
-  const card = document.createElement('div');
-  card.style.cssText = 'background:#fff;border-radius:12px;max-width:900px;width:90vw;max-height:80vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.2);';
-  card.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #eee;">
-      <div style="font-weight:600">预览（前 ${data.limit} 条 / 共 ${data.total}）</div>
-      <button id="pv-close" style="padding:4px 8px;border:1px solid #ddd;background:#f8f8f8;border-radius:8px;cursor:pointer">关闭</button>
-    </div>
-    <div style="padding:12px 16px;">
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr>
-            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">cert_id</th>
-            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">provider</th>
-            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">status</th>
-            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">txid</th>
-            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">created_at</th>
-          </tr>
-        </thead>
-        <tbody id="pv-body"></tbody>
-      </table>
-    </div>
-  `;
-  overlay.appendChild(card);
-  document.body.appendChild(overlay);
-
-  const tbody = card.querySelector('#pv-body');
-  (data.rows || []).forEach(r => {
-    const tr = document.createElement('tr');
-    ['cert_id','provider','status','txid','created_at'].forEach(k=>{
-      const td = document.createElement('td');
-      td.style.cssText = 'border-bottom:1px solid #f3f3f3;padding:6px 8px;white-space:nowrap;';
-      td.textContent = r[k] || '';
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
+  // 监听筛选（200ms 防抖）
+  const onFilterChange = debounce(() => { saveFilters(); updateExportHint(); }, 200);
+  ['hist-q','sel-provider','sel-status'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input',  onFilterChange);
+    el.addEventListener('change', onFilterChange);
   });
 
-  const close = () => overlay.remove();
-  card.querySelector('#pv-close').onclick = close;
-  overlay.onclick = (e) => { if (e.target === overlay) close(); };
-  document.addEventListener('keydown', function esc(e){ if(e.key==='Escape'){ close(); document.removeEventListener('keydown', esc); }});
-}
+  loadFilters();
+  updateExportHint();
 
-// 预览按钮：与导出同样的 q，调用 /api/receipts/preview
-const btnPreview = document.getElementById('btn-preview');
-if (btnPreview) btnPreview.onclick = async () => {
-  try{
-    // 若你已有 buildQueryParts()，直接用；没有就按导出那段拼 parts
-    const parts = typeof buildQueryParts === 'function' ? buildQueryParts() : (() => {
-      const qEl = document.getElementById('hist-q');
-      const prov = (document.getElementById('sel-provider')?.value || '').trim();
-      const stat = (document.getElementById('sel-status')?.value   || '').trim();
-      const p = [];
-      if (prov) p.push(`provider:${prov}`);
-      if (stat) p.push(`status:${stat}`);
-      const free = qEl ? (qEl.value || '').trim() : '';
-      if (free) p.push(free);
-      return p;
-    })();
+  // 预览弹窗
+  function showPreviewDialog(data){
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    const card = document.createElement('div');
+    card.style.cssText = 'background:#fff;border-radius:12px;max-width:900px;width:90vw;max-height:80vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.2);';
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #eee;">
+        <div style="font-weight:600">预览（前 ${data.limit} 条 / 共 ${data.total}）</div>
+        <button id="pv-close" style="padding:4px 8px;border:1px solid #ddd;background:#f8f8f8;border-radius:8px;cursor:pointer">关闭</button>
+      </div>
+      <div style="padding:12px 16px;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr>
+              <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">cert_id</th>
+              <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">provider</th>
+              <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">status</th>
+              <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">txid</th>
+              <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">created_at</th>
+            </tr>
+          </thead>
+          <tbody id="pv-body"></tbody>
+        </table>
+      </div>
+    `;
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
 
-    const qs = new URLSearchParams({ cert_id: String(cert), limit: '20', t: Date.now().toString() });
-    if (parts.length) qs.set('q', parts.join(' '));
+    const tbody = card.querySelector('#pv-body');
+    (data.rows || []).forEach(r => {
+      const tr = document.createElement('tr');
+      ['cert_id','provider','status','txid','created_at'].forEach(k=>{
+        const td = document.createElement('td');
+        td.style.cssText = 'border-bottom:1px solid #f3f3f3;padding:6px 8px;white-space:nowrap;';
+        if (k === 'txid') {
+          const tx = r[k] || '';
+          const txEsc = escHtml(tx);
+          td.innerHTML = tx
+            ? `${txEsc} <button class="btn btn-xs" data-copy-txid="${tx}" title="复制 txid" aria-label="复制 txid">复制</button>`
+            : '';
+        } else {
+          td.textContent = r[k] || '';
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
 
-    const data = await fetch('/api/receipts/preview?' + qs).then(r=>r.json());
-    if (!data || data.ok === false) { msg('预览失败'); return; }
-    showPreviewDialog(data);
-  }catch{ msg('预览失败'); }
-};
-})();
+    const close = () => overlay.remove();
+    card.querySelector('#pv-close').onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  }
+
+  // 预览按钮
+  const btnPreview = document.getElementById('btn-preview');
+  if (btnPreview) btnPreview.onclick = async () => {
+    try{
+      const parts = buildQueryParts();
+      const qs = new URLSearchParams({ cert_id: String(cert), limit: '20', t: Date.now().toString() });
+      if (parts.length) qs.set('q', parts.join(' '));
+      const data = await fetch('/api/receipts/preview?' + qs).then(r=>r.json());
+      if (!data || data.ok === false) { msg('预览失败'); return; }
+      showPreviewDialog(data);
+    } catch (e) { msg('预览失败'); }
+  };
+
+  // 复制文本 + 高亮
+  async function copyText(text){
+    try{
+      await navigator.clipboard.writeText(text);
+      if (typeof toast === 'function') { toast(`已复制：${text.slice(0,8)}...`); }
+      else { msg(`已复制：${text.slice(0,8)}...`); }
+    }catch(e){
+      const ta=document.createElement('textarea');
+      ta.value=text; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta);
+      msg(`已复制：${text.slice(0,8)}...`);
+    }
+  }
+
+document.addEventListener('click', (ev)=>{
+  const btn = ev.target.closest('[data-copy-txid]');
+  if (!btn) return;
+
+  const tx = btn.getAttribute('data-copy-txid') || '';
+  if (tx) copyText(tx);
+
+  // 防抖：已处于“已复制”状态就不重复改文案
+  if (!btn.dataset.copied) {
+    const oldText = btn.textContent;
+    btn.dataset.copied = '1';
+    btn.textContent = '已复制';
+    btn.disabled = true;                 // 可选：短暂禁用，避免连点
+    setTimeout(()=>{
+      btn.textContent = oldText;
+      btn.disabled = false;
+      delete btn.dataset.copied;
+    }, 500);
+  }
+
+  const row = btn.closest('tr') || btn.closest('li') || btn.parentElement;
+  flashNode(row);
+});
+})(); 
 </script>
 </body>
 </html>
