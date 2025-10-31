@@ -162,6 +162,11 @@
       t = setTimeout(() => fn(...args), ms);
     };
   }  // ← 结束 debounce
+function csvCell(v){
+  const s = String(v ?? '');
+  // 用双引号包裹，内部的引号转义为两个引号，换行替成空格
+  return `"${s.replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
+}
 
   let __countReqId = 0;  // 计数请求序号（用于丢弃过期响应）
   // ===== 工具函数区结束 =====
@@ -350,58 +355,76 @@
   updateExportHint();
 
   // 预览弹窗
-  function showPreviewDialog(data){
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:9999;';
-    const card = document.createElement('div');
-    card.style.cssText = 'background:#fff;border-radius:12px;max-width:900px;width:90vw;max-height:80vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.2);';
-    card.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #eee;">
-        <div style="font-weight:600">预览（前 ${data.limit} 条 / 共 ${data.total}）</div>
+function showPreviewDialog(data){
+  // 唯一的 overlay、card
+  const overlay = document.createElement('div');
+  overlay.id = 'vu-preview-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#fff;border-radius:12px;max-width:900px;width:90vw;max-height:80vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.2);';
+
+  // 头部 + 全部CSV/JSON + 关闭
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #eee;">
+      <div style="font-weight:600">预览（前 ${data.limit} 条 / 共 ${data.total}）</div>
+      <div>
+        <button class="btn btn-xs" data-copy-all="csv"  title="复制本次预览的全部行为 CSV"  style="margin-right:6px;">全部CSV</button>
+        <button class="btn btn-xs" data-copy-all="json" title="复制本次预览的全部行为 JSON" style="margin-right:10px;">全部JSON</button>
         <button id="pv-close" style="padding:4px 8px;border:1px solid #ddd;background:#f8f8f8;border-radius:8px;cursor:pointer">关闭</button>
       </div>
-      <div style="padding:12px 16px;">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead>
-            <tr>
-              <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">cert_id</th>
-              <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">provider</th>
-              <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">status</th>
-              <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">txid</th>
-              <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">created_at</th>
-            </tr>
-          </thead>
-          <tbody id="pv-body"></tbody>
-        </table>
-      </div>
-    `;
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
+    </div>
+    <div style="padding:12px 16px;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr>
+            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">cert_id</th>
+            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">provider</th>
+            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">status</th>
+            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">txid</th>
+            <th style="text-align:left;border-bottom:1px solid #eee;padding:6px 8px;">created_at</th>
+          </tr>
+        </thead>
+        <tbody id="pv-body"></tbody>
+      </table>
+    </div>
+  `;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
 
-    const tbody = card.querySelector('#pv-body');
-    (data.rows || []).forEach(r => {
-      const tr = document.createElement('tr');
-      ['cert_id','provider','status','txid','created_at'].forEach(k=>{
-        const td = document.createElement('td');
-        td.style.cssText = 'border-bottom:1px solid #f3f3f3;padding:6px 8px;white-space:nowrap;';
-        if (k === 'txid') {
-          const tx = r[k] || '';
-          const txEsc = escHtml(tx);
-          td.innerHTML = tx
-            ? `${txEsc} <button class="btn btn-xs" data-copy-txid="${tx}" title="复制 txid" aria-label="复制 txid">复制</button>`
-            : '';
-        } else {
-          td.textContent = r[k] || '';
-        }
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
+  // 渲染行（埋 dataset + 行内 CSV/JSON 按钮）
+  const tbody = card.querySelector('#pv-body');
+  (data.rows || []).forEach(r => {
+    const tr = document.createElement('tr');
+
+    tr.dataset.certId    = r.cert_id    || '';
+    tr.dataset.provider  = r.provider   || '';
+    tr.dataset.status    = r.status     || '';
+    tr.dataset.txid      = r.txid       || '';
+    tr.dataset.createdAt = r.created_at || '';
+
+    ['cert_id','provider','status','txid','created_at'].forEach(k=>{
+      const td = document.createElement('td');
+      td.style.cssText = 'border-bottom:1px solid #f3f3f3;padding:6px 8px;white-space:nowrap;';
+      if (k === 'txid') {
+        const tx = r[k] || '';
+        const txEsc = escHtml(tx);
+        const base = tx ? `${txEsc} <button class="btn btn-xs" data-copy-txid="${tx}" title="复制 txid" aria-label="复制 txid">复制</button>` : '';
+        const extra = ` <button class="btn btn-xs" data-copy-row="csv" title="复制此行为 CSV">CSV</button>
+                        <button class="btn btn-xs" data-copy-row="json" title="复制此行为 JSON">JSON</button>`;
+        td.innerHTML = tx ? (base + extra) : extra;
+      } else {
+        td.textContent = r[k] || '';
+      }
+      tr.appendChild(td);
     });
 
-    const close = () => overlay.remove();
-    card.querySelector('#pv-close').onclick = close;
-    overlay.onclick = (e) => { if (e.target === overlay) close(); };
-  }
+    tbody.appendChild(tr);
+  });
+
+  const close = () => overlay.remove();
+  card.querySelector('#pv-close').onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+}
 
   // 预览按钮
   const btnPreview = document.getElementById('btn-preview');
@@ -432,29 +455,97 @@
   }
 
 document.addEventListener('click', (ev)=>{
-  const btn = ev.target.closest('[data-copy-txid]');
-  if (!btn) return;
+  // 1) 复制单个 txid
+  const btnTx = ev.target.closest('[data-copy-txid]');
+  if (btnTx) {
+    const tx = btnTx.getAttribute('data-copy-txid') || '';
+    if (tx) copyText(tx);
 
-  const tx = btn.getAttribute('data-copy-txid') || '';
-  if (tx) copyText(tx);
+    // 按钮文案短反馈（防连点）
+    if (!btnTx.dataset.copied) {
+      const oldText = btnTx.textContent;
+      btnTx.dataset.copied = '1';
+      btnTx.textContent = '已复制';
+      btnTx.disabled = true;
+      setTimeout(()=>{
+        btnTx.textContent = oldText;
+        btnTx.disabled = false;
+        delete btnTx.dataset.copied;
+      }, 500);
+    }
 
-  // 防抖：已处于“已复制”状态就不重复改文案
-  if (!btn.dataset.copied) {
-    const oldText = btn.textContent;
-    btn.dataset.copied = '1';
-    btn.textContent = '已复制';
-    btn.disabled = true;                 // 可选：短暂禁用，避免连点
-    setTimeout(()=>{
-      btn.textContent = oldText;
-      btn.disabled = false;
-      delete btn.dataset.copied;
-    }, 500);
+    const row = btnTx.closest('tr') || btnTx.closest('li') || btnTx.parentElement;
+    flashNode(row);
+    return; // 避免同时触发下面的 copy-row 分支
   }
 
-  const row = btn.closest('tr') || btn.closest('li') || btn.parentElement;
-  flashNode(row);
+  // 2) 复制整行（CSV/JSON）
+  const btnRow = ev.target.closest('[data-copy-row]');
+  if (btnRow) {
+    const tr = btnRow.closest('tr');
+    if (!tr) return;
+
+    const rowData = {
+      cert_id:    tr.dataset.certId    || '',
+      provider:   tr.dataset.provider  || '',
+      status:     tr.dataset.status    || '',
+      txid:       tr.dataset.txid      || '',
+      created_at: tr.dataset.createdAt || ''
+    };
+
+    const mode = btnRow.getAttribute('data-copy-row'); // 'csv' | 'json'
+    if (mode === 'json') {
+      copyText(JSON.stringify(rowData, null, 2));
+    } else {
+      const line = [rowData.cert_id, rowData.provider, rowData.status, rowData.txid, rowData.created_at]
+        .map(csvCell).join(',');
+      copyText(line);
+    }
+
+    const old = btnRow.textContent;
+    btnRow.textContent = '已复制';
+    btnRow.disabled = true;
+    setTimeout(()=>{ btnRow.textContent = old; btnRow.disabled = false; }, 600);
+
+    flashNode(tr);
+  }
 });
-})(); 
+document.addEventListener('click', (ev)=>{
+  const btnAll = ev.target.closest('[data-copy-all]');   // 匹配“全部CSV/全部JSON”
+  if (!btnAll) return;
+
+  // 取当前预览弹窗（我们在 showPreviewDialog 里给 overlay 设置了 id="vu-preview-overlay"）
+  const root = document.getElementById('vu-preview-overlay') || btnAll.closest('#vu-preview-overlay');
+  if (!root) return;
+
+  // 收集所有行的 dataset
+  const rows = Array.from(root.querySelectorAll('#pv-body tr'));
+  const items = rows.map(tr => ({
+    cert_id:    tr.dataset.certId    || '',
+    provider:   tr.dataset.provider  || '',
+    status:     tr.dataset.status    || '',
+    txid:       tr.dataset.txid      || '',
+    created_at: tr.dataset.createdAt || ''
+  }));
+
+  const mode = btnAll.getAttribute('data-copy-all');  // 'csv' | 'json'
+  if (mode === 'json') {
+    copyText(JSON.stringify(items, null, 2));
+  } else {
+    const header = ['cert_id','provider','status','txid','created_at'].map(csvCell).join(',');
+    const lines  = items.map(o => [o.cert_id,o.provider,o.status,o.txid,o.created_at].map(csvCell).join(','));
+    copyText([header, ...lines].join('\n'));
+  }
+
+  // 按钮小反馈
+  const old = btnAll.textContent;
+  btnAll.textContent = '已复制';
+  btnAll.disabled = true;
+  setTimeout(()=>{ btnAll.textContent = old; btnAll.disabled = false; }, 700);
+});
+
+// 这里继续保留 IIFE 的结束
+})();   // ← 不要删
 </script>
 </body>
 </html>
