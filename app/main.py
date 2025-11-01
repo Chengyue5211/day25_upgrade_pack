@@ -10,6 +10,10 @@ import os, hashlib, sqlite3
 import httpx
 import json
 import time
+import logging
+logger = logging.getLogger("verify-upgrade")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO)
 
 # --- make error message UTF-8 safe ---
 def _safe_err(e: Exception) -> str:
@@ -403,6 +407,7 @@ def ci_export_csv(cert_id: str = Query("demo-cert"), q: str = Query("", descript
     _ensure_state(app)
     rows = app.state.receipts.get(cert_id, [])
     rows = [r for r in rows if _match_query(r, q)]
+    logger.info("export_csv requested cert_id=%s q=%s rows=%d", cert_id, q, len(rows))
 
     def gen():
         out = io.StringIO()
