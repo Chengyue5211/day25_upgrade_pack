@@ -140,6 +140,53 @@ def _ensure_state(app):
 
 def _match_query(item: dict, q: str) -> bool:
     # 支持 provider:xxx status:xxx 以及任意子串匹配
+    if not q:
+        return True
+    terms = q.split()
+    for t in terms:
+        if ":" in t:
+            k, v = t.split(":", 1)
+            if (str(item.get(k, ""))).lower() != v.lower():
+                return False
+        else:
+            blob = " ".join([str(item.get(k, "")) for k in ("cert_id", "provider", "status", "txid")])
+            if t.lower() not in blob.lower():
+                return False
+    return True
+
+
+def _load_rows(cert_id: str):
+    """优先读内存；为空则回退 SQLite（data/verify_upgrade.db），统一 time→created_at 映射"""
+    _ensure_state(app)
+    rows = app.state.receipts.get(cert_id, []) or []
+    if rows:
+        return rows
+    # fallback: SQLite
+    try:
+        db_path = os.path.join("data", "verify_upgrade.db")
+        if not os.path.exists(db_path):
+            return []
+        conn = sqlite3.connect(db_path)
+        try:
+            cur = conn.execute(
+                "SELECT provider,status,txid,created_at FROM receipts WHERE cert_id=? ORDER BY id",
+                (cert_id,),
+            )
+            out = []
+            for provider, status, txid, created_at in (cur.fetchall() or []):
+                out.append({
+                    "provider": provider,
+                    "status":   status,
+                    "txid":     txid,
+                    "time":     str(created_at) if created_at is not None else None,
+                })
+            return out
+        finally:
+            conn.close()
+    except Exception:
+        return []
+
+    # 支持 provider:xxx status:xxx 以及任意子串匹配
     if not q: 
         return True
     terms = q.split()
@@ -153,14 +200,12 @@ def _match_query(item: dict, q: str) -> bool:
             if t.lower() not in blob.lower():
                 return False
     return True
-
 @app.get("/api/receipts/count")
 def receipts_count(
     cert_id: str = Query(..., min_length=1),
     q: str = Query("", description="provider:tsa status:pending 等语法")
 ):
-    _ensure_state(app)
-    rows: List[dict] = app.state.receipts.get(cert_id, [])
+    rows = _load_rows(cert_id)
     matched = [r for r in rows if _match_query(r, q)]
     return {"ok": True, "count": len(matched)}
 # —— end ensure ——
@@ -170,9 +215,15 @@ from pathlib import Path
 import os
 @app.get("/vault")
 def vault_index(request: Request, cert_id: str = Query("demo-cert"), q: str = Query("")):
-    _ensure_state(app)
-    rows = app.state.receipts.get(cert_id, [])
-    rows = [r for r in rows if _match_query(r, q)]
+    rows_all = _load_rows(cert_id)
+    rows_flt = [r for r in rows_all if _match_query(r, q)]
+    # 统一字段名，模板用 created_at
+    rows = [{
+        "provider":   r.get("provider"),
+        "status":     r.get("status"),
+        "txid":       r.get("txid"),
+        "created_at": r.get("time"),
+    } for r in rows_flt]
     return templates.TemplateResponse(
         "vault.html",
         {"request": request, "rows": rows, "cert_id": cert_id, "q": q}
@@ -184,22 +235,19 @@ def receipts_preview(
     q: str = Query("", description="provider:tsa status:pending 等语法"),
     limit: int = Query(20, ge=1, le=200)
 ):
-    _ensure_state(app)
-    rows = app.state.receipts.get(cert_id, [])
-    rows = [r for r in rows if _match_query(r, q)]
-    # 统一输出 created_at 字段名，便于前端展示
+    rows_all = _load_rows(cert_id)
+    rows = [r for r in rows_all if _match_query(r, q)]
     view = [
         {
-            "cert_id": cert_id,
-            "provider": r.get("provider"),
-            "status": r.get("status"),
-            "txid": r.get("txid"),
+            "cert_id":    cert_id,
+            "provider":   r.get("provider"),
+            "status":     r.get("status"),
+            "txid":       r.get("txid"),
             "created_at": r.get("time"),
         }
         for r in rows[:limit]
     ]
     return {"ok": True, "total": len(rows), "limit": limit, "rows": view}
-
 
 @app.get("/health")
 def health(cert_id: str = Query(None)):
@@ -413,9 +461,8 @@ def ci_chain_mock(cert_id: str = Query("demo-cert")):
 
 @app.get("/api/receipts/export")
 def ci_export_csv(cert_id: str = Query("demo-cert"), q: str = Query("", description="同 preview/count 语法")):
-    _ensure_state(app)
-    rows = app.state.receipts.get(cert_id, [])
-    rows = [r for r in rows if _match_query(r, q)]
+    rows_all = _load_rows(cert_id)
+    rows = [r for r in rows_all if _match_query(r, q)]
     logger.info("export_csv requested cert_id=%s q=%s rows=%d", cert_id, q, len(rows))
 
     def gen():
