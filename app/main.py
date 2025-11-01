@@ -168,6 +168,15 @@ def receipts_count(
 from datetime import datetime
 from pathlib import Path
 import os
+@app.get("/vault")
+def vault_index(request: Request, cert_id: str = Query("demo-cert"), q: str = Query("")):
+    _ensure_state(app)
+    rows = app.state.receipts.get(cert_id, [])
+    rows = [r for r in rows if _match_query(r, q)]
+    return templates.TemplateResponse(
+        "vault.html",
+        {"request": request, "rows": rows, "cert_id": cert_id, "q": q}
+    )
 
 @app.get("/api/receipts/preview")
 def receipts_preview(
