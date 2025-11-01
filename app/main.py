@@ -403,6 +403,16 @@ def ci_tsa_config():
     ep = os.getenv("TSA_ENDPOINT", "http://127.0.0.1:8011/api/tsa/mock")
     return {"effective": {"endpoint": ep}}
 
+@app.get("/api/tsa/ping")
+async def tsa_ping():
+    ep = os.getenv("TSA_ENDPOINT", "")
+    try:
+        async with httpx.AsyncClient(timeout=6.0, verify=True) as cli:
+            r = await cli.get(ep.rstrip("/") + "/health")
+        return {"ok": 200 <= r.status_code < 300, "endpoint": ep, "status": r.status_code}
+    except Exception as e:
+        return {"ok": False, "endpoint": ep, "err": str(e)}
+
 # ……（上面是你的其它代码，比如 /health、verify_upgrade_page 等）
 
 # ===== 工具函数（放在四个端点之前）=====
