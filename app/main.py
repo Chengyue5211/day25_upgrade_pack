@@ -11,6 +11,7 @@ import httpx
 import json
 import time
 import logging
+import math
 logger = logging.getLogger("verify-upgrade")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
@@ -140,53 +141,6 @@ def _ensure_state(app):
 
 def _match_query(item: dict, q: str) -> bool:
     # 支持 provider:xxx status:xxx 以及任意子串匹配
-    if not q:
-        return True
-    terms = q.split()
-    for t in terms:
-        if ":" in t:
-            k, v = t.split(":", 1)
-            if (str(item.get(k, ""))).lower() != v.lower():
-                return False
-        else:
-            blob = " ".join([str(item.get(k, "")) for k in ("cert_id", "provider", "status", "txid")])
-            if t.lower() not in blob.lower():
-                return False
-    return True
-
-
-def _load_rows(cert_id: str):
-    """优先读内存；为空则回退 SQLite（data/verify_upgrade.db），统一 time→created_at 映射"""
-    _ensure_state(app)
-    rows = app.state.receipts.get(cert_id, []) or []
-    if rows:
-        return rows
-    # fallback: SQLite
-    try:
-        db_path = os.path.join("data", "verify_upgrade.db")
-        if not os.path.exists(db_path):
-            return []
-        conn = sqlite3.connect(db_path)
-        try:
-            cur = conn.execute(
-                "SELECT provider,status,txid,created_at FROM receipts WHERE cert_id=? ORDER BY id",
-                (cert_id,),
-            )
-            out = []
-            for provider, status, txid, created_at in (cur.fetchall() or []):
-                out.append({
-                    "provider": provider,
-                    "status":   status,
-                    "txid":     txid,
-                    "time":     str(created_at) if created_at is not None else None,
-                })
-            return out
-        finally:
-            conn.close()
-    except Exception:
-        return []
-
-    # 支持 provider:xxx status:xxx 以及任意子串匹配
     if not q: 
         return True
     terms = q.split()
@@ -200,12 +154,14 @@ def _load_rows(cert_id: str):
             if t.lower() not in blob.lower():
                 return False
     return True
+
 @app.get("/api/receipts/count")
 def receipts_count(
     cert_id: str = Query(..., min_length=1),
     q: str = Query("", description="provider:tsa status:pending 等语法")
 ):
-    rows = _load_rows(cert_id)
+    _ensure_state(app)
+    rows: List[dict] = app.state.receipts.get(cert_id, [])
     matched = [r for r in rows if _match_query(r, q)]
     return {"ok": True, "count": len(matched)}
 # —— end ensure ——
@@ -213,20 +169,93 @@ def receipts_count(
 from datetime import datetime
 from pathlib import Path
 import os
+
+import math  # 顶部如无就加
+# ---- 安全加载 Vault 列表（内存 receipts → 统一成 provider/status/txid/created_at）----
+def _load_rows(app, cert_id: str = "", q: str = "") -> list:
+    _ensure_state(app)
+    # 1) 取内存里的收据
+    raw = []
+    if cert_id:
+        raw = app.state.receipts.get(cert_id, []) or []
+    else:
+        for v in (app.state.receipts or {}).values():
+            raw.extend(v or [])
+
+    # 2) 统一字段，映射 time -> created_at，并带上 cert_id 便于搜索
+    rows = []
+    for r in raw:
+        rows.append({
+            "cert_id": cert_id or "",
+            "provider": r.get("provider"),
+            "status": r.get("status"),
+            "txid": r.get("txid"),
+            "created_at": r.get("time"),
+        })
+
+    # 3) 关键词过滤（复用你已有的 _match_query）
+    if q:
+        rows = [item for item in rows if _match_query(item, q)]
+    return rows
+
+
 @app.get("/vault")
-def vault_index(request: Request, cert_id: str = Query("demo-cert"), q: str = Query("")):
-    rows_all = _load_rows(cert_id)
-    rows_flt = [r for r in rows_all if _match_query(r, q)]
-    # 统一字段名，模板用 created_at
-    rows = [{
-        "provider":   r.get("provider"),
-        "status":     r.get("status"),
-        "txid":       r.get("txid"),
-        "created_at": r.get("time"),
-    } for r in rows_flt]
+def vault(
+    request: Request,
+    cert_id: str = Query(""),
+    q: str = Query("", alias="q"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=5, le=200),
+    sort: str = Query("created_at"),
+    order: str = Query("desc"),
+):
+    # 载入数据：内存优先，空则回退 SQLite
+    rows = _load_rows(request.app, cert_id=cert_id, q=q) or []
+    if not isinstance(rows, list):
+        rows = list(rows)
+
+    # 统一获取值（兼容 dict 或对象属性）
+    def getval(r, key):
+        if isinstance(r, dict):
+            return r.get(key)
+        try:
+            return getattr(r, key)
+        except Exception:
+            return None
+
+    # 合法排序字段（与你当前模板列一致）
+    allowed = {"created_at", "txid", "provider", "status"}
+    if sort not in allowed:
+        sort = "created_at"
+    reverse = (order.lower() != "asc")
+
+    try:
+        rows = sorted(rows, key=lambda r: (getval(r, sort) or ""), reverse=reverse)
+    except Exception:
+        pass
+
+    # 分页
+    total = len(rows)
+    pages = max(1, math.ceil(total / size))
+    page = max(1, min(page, pages))
+    start = (page - 1) * size
+    end = start + size
+    page_rows = rows[start:end]
+
     return templates.TemplateResponse(
         "vault.html",
-        {"request": request, "rows": rows, "cert_id": cert_id, "q": q}
+        {
+            "request": request,
+            "cert_id": cert_id,
+            "q": q,
+            "rows": page_rows,
+            "total": total,
+            "page": page,
+            "pages": pages,
+            "size": size,
+            "sort": sort,
+            "order": "asc" if not reverse else "desc",
+        },
     )
 
 @app.get("/api/receipts/preview")
@@ -235,19 +264,22 @@ def receipts_preview(
     q: str = Query("", description="provider:tsa status:pending 等语法"),
     limit: int = Query(20, ge=1, le=200)
 ):
-    rows_all = _load_rows(cert_id)
-    rows = [r for r in rows_all if _match_query(r, q)]
+    _ensure_state(app)
+    rows = app.state.receipts.get(cert_id, [])
+    rows = [r for r in rows if _match_query(r, q)]
+    # 统一输出 created_at 字段名，便于前端展示
     view = [
         {
-            "cert_id":    cert_id,
-            "provider":   r.get("provider"),
-            "status":     r.get("status"),
-            "txid":       r.get("txid"),
+            "cert_id": cert_id,
+            "provider": r.get("provider"),
+            "status": r.get("status"),
+            "txid": r.get("txid"),
             "created_at": r.get("time"),
         }
         for r in rows[:limit]
     ]
     return {"ok": True, "total": len(rows), "limit": limit, "rows": view}
+
 
 @app.get("/health")
 def health(cert_id: str = Query(None)):
@@ -403,15 +435,32 @@ def ci_tsa_config():
     ep = os.getenv("TSA_ENDPOINT", "http://127.0.0.1:8011/api/tsa/mock")
     return {"effective": {"endpoint": ep}}
 
+# --- TSA ping with fallbacks (dev-safe) ---
+from urllib.parse import urlparse  # 若顶部已导入，可忽略此行
+
 @app.get("/api/tsa/ping")
-async def tsa_ping():
-    ep = os.getenv("TSA_ENDPOINT", "")
-    try:
-        async with httpx.AsyncClient(timeout=6.0, verify=True) as cli:
-            r = await cli.get(ep.rstrip("/") + "/health")
-        return {"ok": 200 <= r.status_code < 300, "endpoint": ep, "status": r.status_code}
-    except Exception as e:
-        return {"ok": False, "endpoint": ep, "err": str(e)}
+def api_tsa_ping():
+    endpoint = os.getenv("TSA_ENDPOINT", "http://127.0.0.1:8011/api/tsa/mock")
+    base = endpoint.rstrip("/")
+
+    candidates = [endpoint]
+    if not base.endswith("/health"):
+        candidates.append(base + "/health")
+    u = urlparse(endpoint)
+    if u.scheme and u.netloc:
+        candidates.append(f"{u.scheme}://{u.netloc}/health")
+
+    tried = []
+    for url in dict.fromkeys(candidates):  # 去重保序
+        tried.append(url)
+        try:
+            r = httpx.get(url, timeout=2.0)
+            if r.status_code in (200, 204):
+                return {"ok": True, "endpoint": endpoint, "url": url, "status": r.status_code}
+        except Exception:
+            pass
+
+    return JSONResponse({"ok": False, "endpoint": endpoint, "tried": tried}, status_code=502)
 
 # ……（上面是你的其它代码，比如 /health、verify_upgrade_page 等）
 
@@ -471,8 +520,9 @@ def ci_chain_mock(cert_id: str = Query("demo-cert")):
 
 @app.get("/api/receipts/export")
 def ci_export_csv(cert_id: str = Query("demo-cert"), q: str = Query("", description="同 preview/count 语法")):
-    rows_all = _load_rows(cert_id)
-    rows = [r for r in rows_all if _match_query(r, q)]
+    _ensure_state(app)
+    rows = app.state.receipts.get(cert_id, [])
+    rows = [r for r in rows if _match_query(r, q)]
     logger.info("export_csv requested cert_id=%s q=%s rows=%d", cert_id, q, len(rows))
 
     def gen():
@@ -502,4 +552,7 @@ def ci_clear(cert_id: str = Query(None)):
             app.state.receipts = {}
     return {"ok": True, "cleared": cleared}
 # ===== end CI fallback =====
+
+
+ 
 

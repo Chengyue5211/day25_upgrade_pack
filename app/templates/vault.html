@@ -12,32 +12,123 @@
 </style>
 
 <h2>Vault · {{ cert_id }}</h2>
+
 <div class="row">
   <form method="get" action="/vault">
     <input type="hidden" name="cert_id" value="{{ cert_id }}">
+
+    <!-- 这四个隐藏字段要放在 form 里面 -->
+    <input type="hidden" name="page"  value="{{ page or 1 }}">
+    <input type="hidden" name="size"  value="{{ size or 20 }}">
+    <input type="hidden" name="sort"  value="{{ sort or 'created_at' }}">
+    <input type="hidden" name="order" value="{{ order or 'desc' }}">
+
     <input name="q" value="{{ q or '' }}" placeholder="关键词（如：provider:tsa / status:ok / txid 前缀）">
     <button>搜索</button>
   </form>
-  <a href="/api/receipts/export?cert_id={{ cert_id }}&q={{ q|urlencode }}"><button>导出 CSV</button></a>
+
+  <button id="btn-export" type="button" style="position:relative;">
+    导出 CSV
+    <span id="exp-badge" style="display:none;position:absolute;top:-6px;right:-6px;padding:0 6px;border-radius:10px;background:#333;color:#fff;font-size:12px;">0</span>
+  </button>
+
   <a href="/verify_upgrade/{{ cert_id }}"><button>返回 Verify</button></a>
 </div>
 
-{% if rows and rows|length > 0 %}
-<table>
-  <tr>
-    <th>cert_id</th><th>provider</th><th>status</th><th>txid</th><th>created_at</th>
-  </tr>
-  {% for r in rows %}
-  <tr>
-    <td>{{ cert_id }}</td>
-    <td>{{ r.provider }}</td>
-    <td>{{ r.status }}</td>
-    <td>{{ r.txid }}</td>
-    <td>{{ r.created_at }}</td>
-  </tr>
-  {% endfor %}
-</table>
-<p class="muted">共 {{ rows|length }} 条 · 与导出字段保持一致</p>
+{% set base = 'cert_id=' ~ (cert_id or '') ~ '&q=' ~ (q or '') %}
+{% set togg = 'asc' if (order or 'desc')=='desc' else 'desc' %}
+
+{% if (rows|default([]))|length > 0 %}
+  <table>
+    <thead>
+      <tr>
+        <th>cert_id</th>
+        <th>
+          <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=provider&order={{ togg if (sort or '')=='provider' else 'asc' }}">
+            provider{% if (sort or '')=='provider' %} ({{ order }}){% endif %}
+          </a>
+        </th>
+        <th>
+          <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=status&order={{ togg if (sort or '')=='status' else 'asc' }}">
+            status{% if (sort or '')=='status' %} ({{ order }}){% endif %}
+          </a>
+        </th>
+        <th>
+          <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=txid&order={{ togg if (sort or '')=='txid' else 'asc' }}">
+            txid{% if (sort or '')=='txid' %} ({{ order }}){% endif %}
+          </a>
+        </th>
+        <th>
+          <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=created_at&order={{ togg if (sort or '')=='created_at' else 'desc' }}">
+            created_at{% if (sort or '')=='created_at' %} ({{ order }}){% endif %}
+          </a>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ cert_id }}</td>
+        <td>{{ r.provider }}</td>
+        <td>{{ r.status }}</td>
+        <td>{{ r.txid }}</td>
+        <td>{{ r.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- 分页条（表格外） -->
+  <div class="row" style="justify-content:space-between;">
+    <div>
+      <strong>总计：</strong>{{ total or (rows|length) }} 条
+      <span style="margin-left:8px;">第 {{ page or 1 }}/{{ pages or 1 }} 页</span>
+      <span style="margin-left:8px;">每页 {{ size or 20 }} 条</span>
+    </div>
+    <div>
+      {% if (page or 1) > 1 %}
+        <a href="?{{ base }}&page={{ (page or 1)-1 }}&size={{ size or 20 }}&sort={{ sort or 'created_at' }}&order={{ order or 'desc' }}"><button>上一页</button></a>
+      {% endif %}
+      {% if (page or 1) < (pages or 1) %}
+        <a href="?{{ base }}&page={{ (page or 1)+1 }}&size={{ size or 20 }}&sort={{ sort or 'created_at' }}&order={{ order or 'desc' }}"><button>下一页</button></a>
+      {% endif %}
+    </div>
+  </div>
+
+  <p class="muted">共 {{ total or 0 }} 条 · 第 {{ page or 1 }}/{{ pages or 1 }} 页 · 每页 {{ size or 20 }} 条 · 与导出字段保持一致</p>
 {% else %}
-<p>暂无记录。可先回 <a href="/verify_upgrade/{{ cert_id }}">Verify</a> 写入示例数据再来。</p>
+  <p>暂无记录。可先回 <a href="/verify_upgrade/{{ cert_id }}">Verify</a> 写入示例数据再来。</p>
+ 
 {% endif %}
+<script>
+(function(){
+  const btn   = document.getElementById('btn-export');
+  const badge = document.getElementById('exp-badge');
+  if(!btn || !badge) return;
+
+  // 用 tojson 安全取当前搜索词
+  const qRaw = {{ (q or '')|tojson }};
+  const qEnc = encodeURIComponent(qRaw);
+
+  btn.addEventListener('click', async function(){
+    try {
+      // 先查数量（当前 cert_id + q）
+      const res  = await fetch(`/api/receipts/count?cert_id={{ cert_id }}&q=${qEnc}`);
+      const data = await res.json();
+      const n = (data && typeof data.count === 'number') ? data.count : 0;
+
+      // 显示角标 1.5 秒
+      badge.textContent = n;
+      badge.style.display = 'inline-block';
+      setTimeout(()=>{ badge.style.display = 'none'; }, 1500);
+    } catch(e) {
+      // 忽略计数失败
+    }
+
+    // 开始下载（按当前筛选导出）
+    location.href = `/api/receipts/export?cert_id={{ cert_id }}&q=${qEnc}`;
+  });
+})();
+</script>
+
+
