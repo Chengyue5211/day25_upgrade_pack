@@ -9,6 +9,13 @@
   th,td{border:1px solid #eee;padding:8px 10px;text-align:left;font-size:14px}
   th{background:#fafafa}
   .muted{color:#666;font-size:12px}
+/* —— 排序列高亮 —— */
+th.sorted{ background:#f3f6ff; position:relative; }
+th.sorted.asc::after{ content:' ▲'; margin-left:6px; font-weight:600; }
+th.sorted.desc::after{ content:' ▼'; margin-left:6px; font-weight:600; }
+
+/* —— 导出按钮禁用态 —— */
+button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
 </style>
 
 <h2>Vault · {{ cert_id }}</h2>
@@ -39,32 +46,32 @@
 {% set togg = 'asc' if (order or 'desc')=='desc' else 'desc' %}
 
 {% if (rows|default([]))|length > 0 %}
-  <table>
-    <thead>
-      <tr>
-        <th>cert_id</th>
-        <th>
-          <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=provider&order={{ togg if (sort or '')=='provider' else 'asc' }}">
-            provider{% if (sort or '')=='provider' %} ({{ order }}){% endif %}
-          </a>
-        </th>
-        <th>
-          <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=status&order={{ togg if (sort or '')=='status' else 'asc' }}">
-            status{% if (sort or '')=='status' %} ({{ order }}){% endif %}
-          </a>
-        </th>
-        <th>
-          <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=txid&order={{ togg if (sort or '')=='txid' else 'asc' }}">
-            txid{% if (sort or '')=='txid' %} ({{ order }}){% endif %}
-          </a>
-        </th>
-        <th>
-          <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=created_at&order={{ togg if (sort or '')=='created_at' else 'desc' }}">
-            created_at{% if (sort or '')=='created_at' %} ({{ order }}){% endif %}
-          </a>
-        </th>
-      </tr>
-    </thead>
+  <table id="hist-table">
+<thead>
+  <tr>
+    <th data-field="cert_id">cert_id</th>
+    <th data-field="provider">
+      <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=provider&order={{ togg if (sort or '')=='provider' else 'asc' }}">
+        provider{% if (sort or '')=='provider' %} ({{ order }}){% endif %}
+      </a>
+    </th>
+    <th data-field="status">
+      <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=status&order={{ togg if (sort or '')=='status' else 'asc' }}">
+        status{% if (sort or '')=='status' %} ({{ order }}){% endif %}
+      </a>
+    </th>
+    <th data-field="txid">
+      <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=txid&order={{ togg if (sort or '')=='txid' else 'asc' }}">
+        txid{% if (sort or '')=='txid' %} ({{ order }}){% endif %}
+      </a>
+    </th>
+    <th data-field="created_at">
+      <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=created_at&order={{ togg if (sort or '')=='created_at' else 'desc' }}">
+        created_at{% if (sort or '')=='created_at' %} ({{ order }}){% endif %}
+      </a>
+    </th>
+  </tr>
+</thead>
     <tbody>
       {% for r in rows %}
       <tr>
@@ -79,21 +86,51 @@
   </table>
 
   <!-- 分页条（表格外） -->
-  <div class="row" style="justify-content:space-between;">
-    <div>
-      <strong>总计：</strong>{{ total or (rows|length) }} 条
-      <span style="margin-left:8px;">第 {{ page or 1 }}/{{ pages or 1 }} 页</span>
-      <span style="margin-left:8px;">每页 {{ size or 20 }} 条</span>
-    </div>
-    <div>
-      {% if (page or 1) > 1 %}
-        <a href="?{{ base }}&page={{ (page or 1)-1 }}&size={{ size or 20 }}&sort={{ sort or 'created_at' }}&order={{ order or 'desc' }}"><button>上一页</button></a>
-      {% endif %}
-      {% if (page or 1) < (pages or 1) %}
-        <a href="?{{ base }}&page={{ (page or 1)+1 }}&size={{ size or 20 }}&sort={{ sort or 'created_at' }}&order={{ order or 'desc' }}"><button>下一页</button></a>
-      {% endif %}
-    </div>
+<div class="row" style="justify-content:space-between;">
+  <div>
+    <strong>总计：</strong>{{ total or (rows|length) }} 条
+    <span style="margin-left:8px;">第 {{ page or 1 }}/{{ pages or 1 }} 页</span>
+    <span style="margin-left:8px;">每页 {{ size or 20 }} 条</span>
   </div>
+
+  <div style="display:flex;gap:8px;align-items:center;">
+<!-- 页码直跳 -->
+<div class="muted" style="display:inline-flex;align-items:center;gap:6px;">
+  <label for="jumpInput">跳到</label>
+  <input id="jumpInput" type="number" min="1" max="{{ pages or 1 }}"
+         value="{{ page or 1 }}" placeholder="页码"
+         style="width:68px;padding:6px 8px;border:1px solid #ddd;border-radius:6px">
+  <button type="button" id="jumpGo">GO</button>
+</div>
+    <!-- 首页 / 上一页 -->
+    <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort={{ sort or 'created_at' }}&order={{ order or 'desc' }}"><button>首页</button></a>
+    {% if (page or 1) > 1 %}
+      <a href="?{{ base }}&page={{ (page or 1)-1 }}&size={{ size or 20 }}&sort={{ sort or 'created_at' }}&order={{ order or 'desc' }}"><button>上一页</button></a>
+    {% endif %}
+
+    <!-- 下一页 / 末页 -->
+    {% if (page or 1) < (pages or 1) %}
+      <a href="?{{ base }}&page={{ (page or 1)+1 }}&size={{ size or 20 }}&sort={{ sort or 'created_at' }}&order={{ order or 'desc' }}"><button>下一页</button></a>
+    {% endif %}
+    <a href="?{{ base }}&page={{ pages or 1 }}&size={{ size or 20 }}&sort={{ sort or 'created_at' }}&order={{ order or 'desc' }}"><button>末页</button></a>
+
+    <!-- 每页条数下拉：变更即提交，保持当前 q/sort/order -->
+    <form method="get" action="/vault" style="margin:0;">
+      <input type="hidden" name="cert_id" value="{{ cert_id }}">
+      <input type="hidden" name="q"       value="{{ q or '' }}">
+      <input type="hidden" name="page"    value="1">
+      <input type="hidden" name="sort"    value="{{ sort or 'created_at' }}">
+      <input type="hidden" name="order"   value="{{ order or 'desc' }}">
+      <label class="muted" style="margin-left:8px;">每页
+        <select name="size" onchange="this.form.submit()">
+          {% for s in [5,10,20,50,100] %}
+            <option value="{{ s }}" {% if (size or 20)|int == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+  </div>
+</div>
 
   <p class="muted">共 {{ total or 0 }} 条 · 第 {{ page or 1 }}/{{ pages or 1 }} 页 · 每页 {{ size or 20 }} 条 · 与导出字段保持一致</p>
 {% else %}
@@ -102,33 +139,104 @@
 {% endif %}
 <script>
 (function(){
+  // —— 小工具 —— 
+  function qs(s, r){ return (r||document).querySelector(s); }
+  function qsa(s, r){ return (r||document).querySelectorAll(s); }
+  function getTable(){ return document.querySelector('#hist-table') || document.querySelector('table'); }
+  function rowCount(){
+    var t = getTable();
+    if(!t) return 0;
+    var tb = t.tBodies && t.tBodies[0];
+    return tb ? tb.rows.length : 0;
+  }
+
+  // —— 1) 空数据时禁用“导出 CSV” —— 
+  function updateExportState(){
+    var btn = qs('#btn-export');
+    if(!btn) return;
+    var hasData = rowCount() > 0;
+    btn.disabled = !hasData;
+    btn.setAttribute('aria-disabled', String(!hasData));
+    if(!hasData) btn.title = '没有数据可导出';
+  }
+
+  // 保留你的角标计数 + 下载逻辑，但在无数据时拦截
   const btn   = document.getElementById('btn-export');
   const badge = document.getElementById('exp-badge');
-  if(!btn || !badge) return;
-
   // 用 tojson 安全取当前搜索词
   const qRaw = {{ (q or '')|tojson }};
   const qEnc = encodeURIComponent(qRaw);
 
-  btn.addEventListener('click', async function(){
-    try {
-      // 先查数量（当前 cert_id + q）
-      const res  = await fetch(`/api/receipts/count?cert_id={{ cert_id }}&q=${qEnc}`);
-      const data = await res.json();
-      const n = (data && typeof data.count === 'number') ? data.count : 0;
+  if(btn){
+    btn.addEventListener('click', async function(){
+      if(btn.disabled){ alert('当前没有数据可导出'); return; }
+      try {
+        if(badge){
+          const res  = await fetch(`/api/receipts/count?cert_id={{ cert_id }}&q=${qEnc}`);
+          const data = await res.json();
+          const n = (data && typeof data.count === 'number') ? data.count : 0;
+          badge.textContent = n;
+          badge.style.display = 'inline-block';
+          setTimeout(()=>{ badge.style.display = 'none'; }, 1500);
+        }
+      } catch(e) { /* 忽略计数失败 */ }
+      // 开始下载（按当前筛选导出）
+      location.href = `/api/receipts/export?cert_id={{ cert_id }}&q=${qEnc}`;
+    });
+  }
+  // —— 3) 页码直跳 —— 
+  (function(){
+    function jumpTo(p){
+      var n = parseInt(p,10);
+      if(!(n>0)){ alert('请输入正确的页码（>=1）'); return; }
+      var max = parseInt('{{ pages or 1 }}',10) || 1;
+      if(n>max) n = max;
 
-      // 显示角标 1.5 秒
-      badge.textContent = n;
-      badge.style.display = 'inline-block';
-      setTimeout(()=>{ badge.style.display = 'none'; }, 1500);
-    } catch(e) {
-      // 忽略计数失败
+      var sp = new URLSearchParams(location.search);
+      if(!sp.get('cert_id')) sp.set('cert_id', '{{ cert_id }}'); // 兜底
+      sp.set('page', String(n)); // 保留 size/sort/order/q 等其余参数
+      var hash = location.hash || '';
+      location.search = sp.toString() + hash;
     }
+    var ji = document.getElementById('jumpInput');
+    var go = document.getElementById('jumpGo');
+   if(ji) ji.addEventListener('keydown', function(e){
+     if(e.key === 'Enter'){
+      e.preventDefault();           // ← 新增：阻止默认提交
+      jumpTo(ji.value);
+  }
+});
+    if(go) go.addEventListener('click', function(){
+      jumpTo(ji && ji.value);
+    });
+  })();
+  // —— 2) 高亮当前排序列（支持 ?sort=xxx & order=asc/desc） —— 
+  function highlightSort(){
+    var sp = new URLSearchParams(location.search);
+    var key = sp.get('sort') || '';
+    var dir = (sp.get('order') || '').toLowerCase();
 
-    // 开始下载（按当前筛选导出）
-    location.href = `/api/receipts/export?cert_id={{ cert_id }}&q=${qEnc}`;
+    // 若 URL 中没有，退化用表单里的隐藏字段（你表单里已有）
+    var form = qs('form[action="/vault"]');
+    if(form){
+      key = key || (form.querySelector('input[name="sort"]') || {}).value || '';
+      dir = dir || ((form.querySelector('input[name="order"]') || {}).value || '').toLowerCase();
+    }
+    if(!key) return;
+    if(dir !== 'asc' && dir !== 'desc') dir = 'asc';
+
+    var th = qs('th[data-field="'+ key +'"]');
+    if(th){
+      th.classList.add('sorted', dir);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    updateExportState();
+    highlightSort();
   });
 })();
 </script>
+
 
 
