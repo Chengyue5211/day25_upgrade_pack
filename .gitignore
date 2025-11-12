@@ -35,3 +35,9 @@ start_server*.bat
 stop_server*.bat
 app/config.json
 
+.env
+*.bak-*
+uvicorn.*
+start_*.bat
+__pycache__/
+*.pyc
