@@ -26,66 +26,123 @@
     #btn-export[disabled]{ cursor:not-allowed; }
     .btn{padding:6px 10px;border:1px solid #ddd;background:#f7f7f7;border-radius:6px;
      text-decoration:none;color:#111;cursor:pointer}
+    /* 卡片小标题 + 说明行 */
+    .card-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin-bottom:6px;
+    }
+    .card-sub{
+      font-size:12px;
+      color:#888;
+    }
+
+    /* 历史列表样式：去掉默认圆点，增加间距与分隔线 */
+    .history-list{
+      list-style:none;
+      padding:0;
+      margin:0;
+    }
+    .history-list li{
+      padding:6px 0;
+      border-bottom:1px dashed #eee;
+      font-size:13px;
+      line-height:1.5;
+    }
+    .history-list li:last-child{
+      border-bottom:none;
+    }
+    .history-time{
+      font-size:12px;
+      color:#6b7280;
+      margin-right:4px;
+    }
    </style>
 </head>
 <body>
  
   <div class="card">
     <h1>Verify Upgrade</h1>
-    <p class="muted">CERT ID：<code>{{ cert_id }}</code></p>
+    <p class="muted">
+      当前证书：<code>{{ cert_id }}</code>
+      &nbsp;｜&nbsp;
+      快速切换：
+      <a href="/verify_upgrade/demo-cert">demo-cert</a>
+      &nbsp;/&nbsp;
+      <a href="/verify_upgrade/tom-001">tom-001</a>
+      &nbsp;｜&nbsp;
+      历史记录：
+      <a href="/vault?cert_id={{ cert_id }}&sort=created_at&order=desc">打开 Vault</a>
+    </p>
   </div>
 
   <div class="card">
-    <h3>最近回执</h3>
+    <div class="card-header">
+      <h3>最近回执</h3>
+      {% if last_status %}
+        <span class="card-sub">最新一次 TSA / Chain 结果</span>
+      {% else %}
+        <span class="card-sub">暂无数据</span>
+      {% endif %}
+    </div>
     {% set last_status = tsa_last_status|default('', true) %}
     {% set last_txid   = tsa_last_txid|default('', true) %}
     {% set last_provider = (history[0]['provider'] if (history is defined and history and history|length>0 and history[0] is mapping and 'provider' in history[0]) else
                             (history[0].provider if (history is defined and history and history|length>0 and history[0] is not mapping and history[0].provider is defined) else None)) %}
     {% if last_status %}
-      <p>来源：
+      <p>
+        <span class="card-sub">来源：</span>
         {% if last_provider %}
           <span class="badge {{ 'badge-tsa' if last_provider=='tsa' else 'badge-chain' }}">{{ last_provider }}</span>
-        {% else %}<span class="muted">未知</span>{% endif %}
+        {% else %}
+          <span class="muted">未知</span>
+        {% endif %}
       </p>
-      <p>状态：
+      <p>
+        <span class="card-sub">状态：</span>
         {% set st = 'success' if last_status in ['ok','success']
          else 'failed' if last_status in ['error','failed']
          else 'pending' %}
         <span class="status-{{ st }}">{{ last_status }}</span>
       </p>
-      <p>TX：
-{% if last_txid %}
-  <code>{{ last_txid|e }}</code>
-  <button class="btn btn-xs" data-copy-txid="{{ last_txid }}" aria-label="复制 txid">复制</button>
-{% else %}
-  <span class="muted">无</span>
-{% endif %}
-</p>
-
+      <p>
+        <span class="card-sub">TX：</span>
+        {% if last_txid %}
+          <code>{{ last_txid|e }}</code>
+          <button class="btn btn-xs" data-copy-txid="{{ last_txid }}" aria-label="复制 txid">复制</button>
+        {% else %}
+          <span class="muted">无</span>
+        {% endif %}
+      </p>
     {% else %}
       <p class="muted">暂无回执。请先调用 TSA/Chain 回执接口。</p>
     {% endif %}
   </div>
-
   <div class="card">
-    <h3>回执历史（近 5 条）</h3>
+    <div class="card-header">
+      <h3>回执历史（近 5 条）</h3>
+      <span class="card-sub">按时间倒序 · 方便一眼对比</span>
+    </div>
     {% if history is defined and history and history|length>0 %}
-      <ul>
+      <ul class="history-list">
         {% for r in history %}
           {% set provider = r.provider if r is not mapping else r.get('provider') %}
           {% set status   = r.status   if r is not mapping else r.get('status') %}
           {% set txid     = r.txid     if r is not mapping else r.get('txid') %}
           {% set created  = r.created_at if r is not mapping else r.get('created_at') %}
           <li>
-            [{% if created %}{{ created }}{% else %}--{% endif %}]
+            <span class="history-time">
+              {% if created %}{{ created }}{% else %}--{% endif %}
+            </span>
             <span class="badge {{ 'badge-tsa' if provider=='tsa' else 'badge-chain' }}">{{ provider|default('unknown') }}</span>
             {% set map = {'ok':'success','success':'success','failed':'failed','error':'failed','pending':'pending'} %}
             · <span class="status-{{ map.get((status or '')|lower, 'pending') }}">{{ status|default('pending') }}</span>
-    {% if txid %}
-        · TX: <code>{{ txid|e }}</code>
-        <button class="btn btn-xs" data-copy-txid="{{ txid }}" aria-label="复制 txid">复制</button>
-{% endif %}
-
+            {% if txid %}
+              · TX:
+              <code>{{ txid|e }}</code>
+              <button class="btn btn-xs" data-copy-txid="{{ txid }}" aria-label="复制 txid">复制</button>
+            {% endif %}
           </li>
         {% endfor %}
       </ul>
@@ -111,6 +168,12 @@
   <button id="btn-refresh" style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">刷新历史</button>
   <button id="btn-clear"   style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">清空历史</button>
   <button id="btn-preview" style="padding:6px 10px;border:1px solid #d1d5db;background:#fff;border-radius:8px;cursor:pointer">预览</button>
+
+  <!-- 新增：一键写入 Vault（使用最近回执） -->
+  <button id="btn-write-vault" style="padding:6px 10px;border:1px solid #d1d5db;background:#e0f2fe;border-radius:8px;cursor:pointer">
+    写入 Vault
+  </button>
+
   <button id="btn-export"  style="padding:6px 10px;border:1px solid #d1d5db;background:#f0f9ff;border-radius:8px;cursor:pointer">导出 CSV</button>
   <a id="btn-vault" class="btn" href="/vault?cert_id={{ cert_id }}" title="回溯列表（Vault）">
    Vault (<span id="vault-count">--</span>)
@@ -145,6 +208,11 @@ function fmtTime(t){ return (t||'').replace('T',' ').replace('Z',''); }
 
   const cert = "{{ cert_id|default('') }}";
   const msg  = s => { const el = document.getElementById('quick-msg'); if (el) el.textContent = s || ''; };
+
+  // 最近回执的信息（来自上面模板里的 last_provider / last_status / last_txid）
+  const LAST_PROVIDER = {{ last_provider|default('')|tojson }};
+  const LAST_STATUS   = {{ last_status|default('')|tojson }};
+  const LAST_TXID     = {{ last_txid|default('')|tojson }};
 
   // ===== 工具函数区 =====
   function escHtml(s){
@@ -244,6 +312,52 @@ function csvCell(v){
         msg('写入失败，请重试');
       } finally {
         busy = false; seedBtn.disabled = false;
+      }
+    };
+  }
+  // 写入 Vault（使用最近回执）
+  const btnWriteVault = document.getElementById('btn-write-vault');
+  if (btnWriteVault) {
+    btnWriteVault.onclick = async () => {
+      // 没有最近回执就不给写
+      if (!LAST_TXID || !LAST_STATUS || !LAST_PROVIDER) {
+        msg('当前没有可写入的回执');
+        return;
+      }
+
+      btnWriteVault.disabled = true;
+      msg('正在写入 Vault…');
+
+      try {
+        const body = {
+          provider: LAST_PROVIDER,
+          status:   LAST_STATUS,
+          tx:       LAST_TXID
+        };
+
+        const res = await fetch(`/api/receipts/add?cert_id=${encodeURIComponent(cert)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+
+        if (!data || data.ok === false) {
+          msg('写入 Vault 失败');
+        } else {
+          msg('已写入 Vault 1 条');
+
+          // 更新底部 Vault(N) 的数量
+          try {
+            const d = await fetch('/api/receipts/count?' + new URLSearchParams({ cert_id: String(cert) })).then(r => r.json());
+            const el = document.getElementById('vault-count');
+            if (el && d && d.ok && typeof d.count === 'number') el.textContent = d.count;
+          } catch (e) {}
+        }
+      } catch (e) {
+        msg('写入 Vault 失败，请重试');
+      } finally {
+        btnWriteVault.disabled = false;
       }
     };
   }

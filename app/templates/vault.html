@@ -5,22 +5,79 @@
   body{font-family:Arial,Helvetica,sans-serif;margin:24px;color:#111}
   .row{display:flex;gap:8px;align-items:center;margin:8px 0 16px}
   input,button{padding:6px 8px;border:1px solid #ddd;border-radius:6px}
-  table{border-collapse:collapse;width:100%}
-  th,td{border:1px solid #eee;padding:8px 10px;text-align:left;font-size:14px}
-  th{background:#fafafa}
-  .muted{color:#666;font-size:12px}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #eee;padding:8px 10px;text-align:left;font-size:14px}
+th{background:#fafafa}
+.muted{color:#666;font-size:12px}
+
 /* —— 排序列高亮 —— */
-th.sorted{ background:#f3f6ff; position:relative; }
+/* ... 原有内容 ... */
+
+/* 表格斑马纹：偶数行轻微底色 */
+tbody tr:nth-child(even){
+  background:#fcfcfc;
+}
+
+/* 行 hover 高亮：鼠标移上去微微变黄，方便扫视 */
+tbody tr:hover{
+  background:#fffbe6;
+}
+
+/* —— 排序列高亮 —— */
+/* 当前排序列更显眼的配色 */
+th.sorted{
+  background:#eef4ff;   /* 比原来的 #f3f6ff 更明显一点 */
+  color:#0057d9;        /* 表头文字上色 */
+}
 th.sorted.asc::after{ content:' ▲'; margin-left:6px; font-weight:600; }
 th.sorted.desc::after{ content:' ▼'; margin-left:6px; font-weight:600; }
+
+/* 细节：鼠标移到表头时给个手型和轻微背景 */
+th[data-field] a{ text-decoration:none; color:inherit; }
+th[data-field] a:hover{ text-decoration:underline; }
+th[data-field]{ cursor:pointer; }
 
 /* —— 导出按钮禁用态 —— */
 button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
 </style>
-
 <h2>Vault · {{ cert_id }}</h2>
 
+<div class="muted" style="margin-top:4px;margin-bottom:8px;font-size:13px;color:#555;">
+  当前证书：<code>{{ cert_id }}</code>
+  &nbsp;|&nbsp;
+  快速切换：
+
+  {% if cert_id == 'demo-cert' %}
+    <strong>demo-cert</strong>
+    &nbsp;/&nbsp;
+    <a href="/vault?cert_id=tom-001&sort=created_at&order=desc">tom-001</a>
+  {% elif cert_id == 'tom-001' %}
+    <a href="/vault?cert_id=demo-cert&sort=created_at&order=desc">demo-cert</a>
+    &nbsp;/&nbsp;
+    <strong>tom-001</strong>
+  {% else %}
+    <a href="/vault?cert_id=demo-cert&sort=created_at&order=desc">demo-cert</a>
+    &nbsp;/&nbsp;
+    <a href="/vault?cert_id=tom-001&sort=created_at&order=desc">tom-001</a>
+  {% endif %}
+
+  {% if q %}
+    &nbsp;|&nbsp;
+    当前筛选：<code>{{ q }}</code>
+  {% endif %}
+</div>
+
+<div class="muted" style="margin-top:-4px;margin-bottom:8px;font-size:12px;">
+  时间范围：
+  <a href="#" data-time-range="all" style="font-weight:bold;">全部</a>
+  &nbsp;/&nbsp;
+  <a href="#" data-time-range="1h">近 1 小时</a>
+  &nbsp;/&nbsp;
+  <a href="#" data-time-range="24h">近 24 小时</a>
+</div>
+
 <div class="row">
+
   <form method="get" action="/vault">
     <input type="hidden" name="cert_id" value="{{ cert_id }}">
 
@@ -32,9 +89,12 @@ button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
 
     <input name="q" value="{{ q or '' }}" placeholder="关键词（如：provider:tsa / status:ok / txid 前缀）">
     <button>搜索</button>
+    <a href="/vault?cert_id={{ cert_id }}&page=1&size={{ size or 20 }}&sort={{ sort or 'created_at' }}&order={{ order or 'desc' }}">
+      <button type="button">清空</button>
+    </a>
   </form>
 
-  <button id="btn-export" type="button" style="position:relative;">
+  <button id="btn-export" type="button" onclick="__export_click()" style="position:relative;">
     导出 CSV
     <span id="exp-badge" style="display:none;position:absolute;top:-6px;right:-6px;padding:0 6px;border-radius:10px;background:#333;color:#fff;font-size:12px;">0</span>
   </button>
@@ -44,45 +104,54 @@ button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
 
 {% set base = 'cert_id=' ~ (cert_id or '') ~ '&q=' ~ (q or '') %}
 {% set togg = 'asc' if (order or 'desc')=='desc' else 'desc' %}
+{# 通用排序表头宏：生成可点击表头并在 asc/desc 间切换 #}
+{% macro sort_th(field, label) -%}
+  {# 当前参数（若 URL 没带，则回落到模板里的 sort/order 默认值） #}
+  {%- set cur  = request.query_params.get('sort',  (sort  or 'created_at')) -%}
+  {%- set ord  = request.query_params.get('order', (order or 'desc')) -%}
+  {%- set next = 'asc' if (cur == field and ord == 'desc') else 'desc' -%}
+  <th data-field="{{ field }}">
+    <a href="?cert_id={{ cert_id }}&q={{ q or '' }}&page=1&size={{ size or 20 }}&sort={{ field }}&order={{ next }}">
+      {{ label }}
+    </a>
+  </th>
+{%- endmacro %}
 
 {% if (rows|default([]))|length > 0 %}
   <table id="hist-table">
 <thead>
   <tr>
     <th data-field="cert_id">cert_id</th>
-    <th data-field="provider">
-      <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=provider&order={{ togg if (sort or '')=='provider' else 'asc' }}">
-        provider{% if (sort or '')=='provider' %} ({{ order }}){% endif %}
-      </a>
-    </th>
-    <th data-field="status">
-      <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=status&order={{ togg if (sort or '')=='status' else 'asc' }}">
-        status{% if (sort or '')=='status' %} ({{ order }}){% endif %}
-      </a>
-    </th>
-    <th data-field="txid">
-      <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=txid&order={{ togg if (sort or '')=='txid' else 'asc' }}">
-        txid{% if (sort or '')=='txid' %} ({{ order }}){% endif %}
-      </a>
-    </th>
-    <th data-field="created_at">
-      <a href="?{{ base }}&page=1&size={{ size or 20 }}&sort=created_at&order={{ togg if (sort or '')=='created_at' else 'desc' }}">
-        created_at{% if (sort or '')=='created_at' %} ({{ order }}){% endif %}
-      </a>
-    </th>
+    {{ sort_th('provider',   'provider') }}
+    {{ sort_th('status',     'status') }}
+    {{ sort_th('txid',       'txid') }}
+    {{ sort_th('created_at', 'created_at') }}
   </tr>
 </thead>
+
     <tbody>
       {% for r in rows %}
-      <tr>
+      <tr data-created-at="{{ r.created_at }}">
         <td>{{ cert_id }}</td>
         <td>{{ r.provider }}</td>
         <td>{{ r.status }}</td>
-        <td>{{ r.txid }}</td>
-        <td>{{ r.created_at }}</td>
+        <td>
+          {% if r.txid %}
+            <code>{{ r.txid }}</code>
+            <button type="button"
+                    data-tx="{{ r.txid }}"
+                    style="margin-left:6px;padding:2px 6px;font-size:12px;border-radius:6px;">
+              复制
+            </button>
+          {% else %}
+            <span class="muted">--</span>
+          {% endif %}
+        </td>
+        <td>{{ (r.created_at|string)[:19]|replace('T', ' ') }}</td>
       </tr>
       {% endfor %}
     </tbody>
+
   </table>
 
   <!-- 分页条（表格外） -->
@@ -150,40 +219,76 @@ button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
     return tb ? tb.rows.length : 0;
   }
 
+  // —— 时间范围过滤：all / 1h / 24h —— 
+  function applyTimeFilter(range){
+    var now = Date.now();
+    var rows = qsa('#hist-table tbody tr');
+    if (!rows || !rows.length) return;
+
+    var visible = 0;  // 统计当前显示条数
+
+    rows.forEach(function(tr){
+      var raw = tr.getAttribute('data-created-at') || '';
+      if (!raw){
+        tr.style.display = '';
+        visible++;
+        return;
+      }
+
+      // 原始时间字符串统一处理
+      var s = String(raw).trim();
+      // 如果是 "2025-11-23 01:36:59.995602" 这种，把空格换成 T
+      if (s.indexOf('T') < 0 && s.indexOf(' ') > -1){
+        s = s.replace(' ', 'T');
+      }
+      // 只保留到秒，去掉毫秒/微秒，避免 Date 解析失败
+      if (s.length > 19){
+        s = s.slice(0, 19);   // 例如 2025-11-23T01:36:59
+      }
+
+      var d = new Date(s);
+      if (isNaN(d.getTime())){
+        tr.style.display = '';
+        visible++;
+        return;
+      }
+
+      var diff = now - d.getTime(); // 毫秒差
+      var show = true;
+      if (range === '1h'){
+        show = (diff >= 0 && diff <= 60 * 60 * 1000);       // 近 1 小时
+      } else if (range === '24h'){
+        show = (diff >= 0 && diff <= 24 * 60 * 1000 * 60);  // 近 24 小时
+      } else {
+        show = true; // all
+      }
+      tr.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+
+    // 右上角给个提示，确认过滤生效
+    if (typeof showToast === 'function') {
+      var label = (range === '1h') ? '近 1 小时'
+                : (range === '24h') ? '近 24 小时'
+                : '全部';
+      showToast('时间范围：' + label + ' · 当前显示 ' + visible + ' 条');
+    }
+  }
+
   // —— 1) 空数据时禁用“导出 CSV” —— 
   function updateExportState(){
     var btn = qs('#btn-export');
     if(!btn) return;
     var hasData = rowCount() > 0;
-    btn.disabled = !hasData;
+    btn.disabled = false;  // 保持可点击
     btn.setAttribute('aria-disabled', String(!hasData));
-    if(!hasData) btn.title = '没有数据可导出';
+    btn.style.opacity = hasData ? '' : '.55';
+    btn.title = hasData ? '' : '没有数据可导出';
+
   }
 
   // 保留你的角标计数 + 下载逻辑，但在无数据时拦截
-  const btn   = document.getElementById('btn-export');
-  const badge = document.getElementById('exp-badge');
-  // 用 tojson 安全取当前搜索词
-  const qRaw = {{ (q or '')|tojson }};
-  const qEnc = encodeURIComponent(qRaw);
-
-  if(btn){
-    btn.addEventListener('click', async function(){
-      if(btn.disabled){ alert('当前没有数据可导出'); return; }
-      try {
-        if(badge){
-          const res  = await fetch(`/api/receipts/count?cert_id={{ cert_id }}&q=${qEnc}`);
-          const data = await res.json();
-          const n = (data && typeof data.count === 'number') ? data.count : 0;
-          badge.textContent = n;
-          badge.style.display = 'inline-block';
-          setTimeout(()=>{ badge.style.display = 'none'; }, 1500);
-        }
-      } catch(e) { /* 忽略计数失败 */ }
-      // 开始下载（按当前筛选导出）
-      location.href = `/api/receipts/export?cert_id={{ cert_id }}&q=${qEnc}`;
-    });
-  }
+   
   // —— 3) 页码直跳 —— 
   (function(){
     function jumpTo(p){
@@ -214,6 +319,7 @@ button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
   function highlightSort(){
     var sp = new URLSearchParams(location.search);
     var key = sp.get('sort') || '';
+    key = key.replace(/\s+/g, '_');   // ← 把“created at”变成 “created_at”
     var dir = (sp.get('order') || '').toLowerCase();
 
     // 若 URL 中没有，退化用表单里的隐藏字段（你表单里已有）
@@ -234,19 +340,202 @@ button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
   document.addEventListener('DOMContentLoaded', function(){
     updateExportState();
     highlightSort();
+
+    // 绑定“时间范围”链接点击事件
+    var links = qsa('[data-time-range]');
+    if (links && links.length){
+      links.forEach(function(a){
+        a.addEventListener('click', function(e){
+          e.preventDefault();
+          var range = a.getAttribute('data-time-range') || 'all';
+          applyTimeFilter(range);
+
+          // 简单高亮当前选中项
+          links.forEach(function(x){ x.style.fontWeight = 'normal'; });
+          a.style.fontWeight = 'bold';
+        });
+      });
+      // 初始状态：按“全部”显示一次
+      applyTimeFilter('all');
+    }
   });
 })();
+
+    // 输入即搜 · 300ms 防抖 + IME 兼容 + 去重
+  (function(){
+    var form = document.querySelector('form[action="/vault"]');
+    var qEl  = form ? form.querySelector('input[name="q"]') : null;
+    if(!form || !qEl) return;
+
+    var timer = null;
+    var composing = false;      // 中文输入法合成中
+    var lastValue = qEl.value;  // 避免重复提交
+
+    function submitNow(){
+      var v = (qEl.value || '').trim();
+      if (v === lastValue) return;     // 内容没变就不重复提交
+      lastValue = v;
+      try { form.requestSubmit ? form.requestSubmit() : form.submit(); }
+      catch(e){ form.submit(); }
+    }
+
+    // 处理中文输入法：合成期间先不触发
+    qEl.addEventListener('compositionstart', function(){ composing = true; });
+    qEl.addEventListener('compositionend',   function(){
+      composing = false;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(submitNow, 300);
+    });
+
+    // 300ms 防抖
+    qEl.addEventListener('input', function(){
+      if (composing) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(submitNow, 300);
+    });
+
+    // Enter 立即搜索；Esc 清空并搜索
+    qEl.addEventListener('keydown', function(e){
+      if (e.key === 'Enter'){
+        e.preventDefault();
+        if (timer) clearTimeout(timer);
+        submitNow();
+      }
+      if (e.key === 'Escape'){
+        qEl.value = '';
+        if (timer) clearTimeout(timer);
+        submitNow();
+      }
+    });
+  })();
+
+<!-- Toast UI -->
+<div id="toast"></div>
+<style>
+  #toast{position:fixed;top:12px;right:12px;background:#333;color:#fff;
+         padding:8px 12px;border-radius:8px;font-size:12px;opacity:0;
+         pointer-events:none;transition:opacity .2s;}
+  #toast.show{opacity:.92;}
+  #toast.err{background:#b00020;}
+</style>
+<script>
+  function showToast(msg, isErr){
+    const t=document.getElementById('toast');
+    if(!t) return;
+    t.textContent = msg;
+    t.classList.toggle('err', !!isErr);
+    t.classList.add('show');
+    setTimeout(()=>t.classList.remove('show'), 1800);
+  }
+
+  // 清空搜索条件并回到第 1 页（直接改 URL 参数）
+  function __clear_q(){
+    // 读取当前 URL 中的查询参数
+    var sp = new URLSearchParams(window.location.search);
+
+    // 保留 cert_id，其他参数回到默认
+    sp.set('cert_id', '{{ cert_id }}');
+    sp.delete('q');  // 关键：删除筛选条件
+    sp.set('page', '1');
+    sp.set('size', '{{ size or 20 }}');
+    sp.set('sort', '{{ sort or "created_at" }}');
+    sp.set('order', '{{ order or "desc" }}');
+
+    // 跳转到新的查询字符串
+    window.location.search = sp.toString();
+  }
+</script>
+<script>
+  // 列表里一键复制 txid（朴素版：一定有提示）
+  document.addEventListener('click', function(ev){
+    var btn = ev.target.closest('button[data-tx]');
+    if (!btn) return;
+
+    var tx = btn.getAttribute('data-tx') || '';
+    if (!tx) return;
+
+    // 用 textarea + execCommand 方式复制
+    var ta = document.createElement('textarea');
+    ta.value = tx;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+
+    // 弹个提示，让你有明显反馈
+    if (typeof showToast === 'function') {
+      showToast('已复制 txid：' + tx.slice(0, 12) + '…');
+    } else {
+      alert('已复制 txid：' + tx);
+    }
+  });
+</script>
+
+<script>
+  async function __export_click(){
+    // 1) 无数据时直接提示并退出
+    try{
+      if (typeof rowCount === 'function' && rowCount() === 0){
+        if (typeof showToast === 'function'){
+          showToast('当前没有数据可导出', true);
+        } else {
+          alert('当前没有数据可导出');
+        }
+        return;
+      }
+    }catch(e){ /* ignore */ }
+
+    // 2) 角标（可选）
+    try{
+      const badge = document.getElementById('exp-badge');
+      if(badge){
+        const qRaw = {{ (q or '')|tojson }};
+        const qEnc = encodeURIComponent(qRaw);
+        const res  = await fetch(`/api/receipts/count?cert_id={{ cert_id }}&q=${qEnc}`);
+        const data = await res.json();
+        const n = (data && typeof data.count === 'number') ? data.count : 0;
+        badge.textContent = n;
+        badge.style.display = 'inline-block';
+        setTimeout(()=>{ badge.style.display = 'none'; }, 1500);
+      }
+    }catch(e){ /* ignore */ }
+
+    // 3) 下载 + 复制到剪贴板（加时间戳防缓存）
+    const qRaw = {{ (q or '')|tojson }};
+    const qEnc = encodeURIComponent(qRaw);
+    const url  = `/api/receipts/export?cert_id={{ cert_id }}&q=${qEnc}&_ts=${Date.now()}`;
+
+    try { location.href = url; } catch(e){ /* ignore */ }
+
+    try{
+      const res2 = await fetch(url, { cache: 'no-store' });
+      if(!res2.ok) throw new Error('fetch csv failed');
+      const txt  = await res2.text();
+
+      if (!navigator.clipboard || !navigator.clipboard.writeText){
+        if (typeof showToast === 'function'){
+          showToast('已下载。浏览器不支持自动复制，可手动复制。', true);
+        }
+        return;
+      }
+
+      let lines = 0;
+      try { lines = Math.max(0, txt.trim().split('\n').length - 1); } catch(e){}
+      await navigator.clipboard.writeText(txt);
+      if (typeof showToast === 'function'){
+        showToast(`CSV 已复制到剪贴板（${lines} 行）`);
+      }
+    }catch(e){
+      if (typeof showToast === 'function'){
+        showToast('已下载，但自动复制失败：可手动复制', true);
+      }
+    }
+  }
 </script>
 
 
 
 
-<!-- ui: sort highlight + page jump + export guard -->
 
-<!-- ui: sort highlight + page jump + export guard -->
 
-<!-- ui: vault sort highlight + page jump + export guard -->
 
-<!-- ui: vault sort highlight + page jump + export guard -->
-
-<!-- pr diff marker 2025-11-12T14:16:47 -->
