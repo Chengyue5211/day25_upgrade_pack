@@ -41,3 +41,11 @@ uvicorn.*
 start_*.bat
 __pycache__/
 *.pyc
+
+# Local temp scripts
+run_all_8013_tunnel_and_backend.bat
+run_all_safe_8013.bat
+vars_8013_real_tsa.bat
+
+# Strange auto-generated model copy
+app/models (2).py
