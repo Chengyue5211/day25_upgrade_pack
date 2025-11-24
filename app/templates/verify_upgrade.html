@@ -225,13 +225,23 @@
                style="width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:6px;">
       </label>
     </div>
+
     <div style="margin-bottom:8px;">
       <button id="btn-save-biz" class="btn btn-xs" style="padding:4px 10px;border-radius:6px;">
         保存业务信息
       </button>
       <span id="biz-msg" class="muted" style="margin-left:8px;font-size:12px;"></span>
     </div>
- 
+
+    <!-- 新增：返回 Vault 按钮 -->
+    <div style="margin-top: 4px; margin-bottom: 10px;">
+      <a href="/vault?cert_id={{ cert_id }}&sort=created_at&order=desc"
+         class="btn"
+         style="padding:4px 10px; font-size:12px;">
+        返回 Vault
+      </a>
+    </div>
+
     <!-- 当前值展示（从 evidence 里读） -->
     <ul>
       <li>
@@ -303,8 +313,8 @@
     </ul>
 
     <p class="muted" style="margin-top:6px;">
-    上面的输入框用于填写“业务编号 / 标题 / Owner”，点击「保存业务信息」后会写入本地数据库；
-    下半部分为技术证明字段，仍然从 evidence 里读取，未提供时显示为 “--”。
+      上面的输入框用于填写“业务编号 / 标题 / Owner”，点击「保存业务信息」后会写入本地数据库；
+      下半部分为技术证明字段，仍然从 evidence 里读取，未提供时显示为 “--”。
     </p>
   </div>
 
