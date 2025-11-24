@@ -40,7 +40,20 @@ th[data-field]{ cursor:pointer; }
 /* —— 导出按钮禁用态 —— */
 button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
 </style>
+
 <h2>Vault · {{ cert_id }}</h2>
+
+{% if evidence %}
+<div class="card" style="margin-top: 8px; margin-bottom: 12px;">
+  <div><strong>业务编号：</strong> {{ evidence.case_id or '——' }}</div>
+  <div><strong>证据标题：</strong> {{ evidence.title or '——' }}</div>
+  <div><strong>Owner：</strong> {{ evidence.owner or '——' }}</div>
+</div>
+{% else %}
+<div class="card" style="margin-top: 8px; margin-bottom: 12px;">
+  <div><strong>业务信息：</strong> 暂无（请在 Verify 页面填写并保存后再刷新）</div>
+</div>
+{% endif %}
 
 <div class="muted" style="margin-top:4px;margin-bottom:8px;font-size:13px;color:#555;">
   当前证书：<code>{{ cert_id }}</code>
@@ -76,8 +89,12 @@ button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
   <a href="#" data-time-range="24h">近 24 小时</a>
 </div>
 
-<div class="row">
+<div id="vault-health" class="muted" style="margin-top:-2px;margin-bottom:8px;font-size:12px;">
+  状态：读取中…
+</div>
 
+<div class="row">
+ 
   <form method="get" action="/vault">
     <input type="hidden" name="cert_id" value="{{ cert_id }}">
 
@@ -218,6 +235,13 @@ button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
     var tb = t.tBodies && t.tBodies[0];
     return tb ? tb.rows.length : 0;
   }
+  // —— Vault 健康状态：测试版 —— 
+  function updateVaultHealth(){
+    var el = qs('#vault-health');
+    if (!el) return;
+
+    el.textContent = '状态：测试成功 · 这是本地 JS 写进去的';
+  }
 
   // —— 时间范围过滤：all / 1h / 24h —— 
   function applyTimeFilter(range){
@@ -340,6 +364,7 @@ button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
   document.addEventListener('DOMContentLoaded', function(){
     updateExportState();
     highlightSort();
+    updateVaultHealth();   // 调用上面定义的函数
 
     // 绑定“时间范围”链接点击事件
     var links = qsa('[data-time-range]');
@@ -532,6 +557,15 @@ button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
     }
   }
 </script>
+<script>
+  // 简易版：页面加载完后，把状态行文字改掉（不调用 /health）
+  document.addEventListener('DOMContentLoaded', function () {
+    var el = document.getElementById('vault-health');
+    if (!el) return;
+    el.textContent = '状态：本地 8013 已启动 · 条目请看下方“总计”';
+  });
+</script>
+
 
 
 

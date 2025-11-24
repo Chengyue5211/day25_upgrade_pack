@@ -1,9 +1,11 @@
 ﻿# -*- coding: utf-8 -*-
-import datetime
 from pathlib import Path
+from datetime import datetime
 
 from fastapi import FastAPI, Request, Depends, Query
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
+from pydantic import BaseModel
+from sqlalchemy import create_engine, text
 
 import io, csv, secrets
 import os, hashlib, sqlite3
@@ -11,10 +13,19 @@ import httpx
 import json
 import time
 import logging
-import math
+
 logger = logging.getLogger("verify-upgrade")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
+
+# 全局数据库引擎（如果下面已经有同名定义，就不要重复）
+DB_URL = "sqlite:///data/verify_upgrade.db"
+engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+
+from fastapi.templating import Jinja2Templates
+
+BASE_DIR = Path(__file__).resolve().parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # --- make error message UTF-8 safe ---
 def _safe_err(e: Exception) -> str:
@@ -33,16 +44,37 @@ def _safe_json(obj):
         except Exception:
 
             return {"raw": repr(obj)[:1000]}
-from fastapi.responses import StreamingResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from sqlalchemy import text  # 用原生 SQL 插入，避免依赖你内部 ORM 细节
-from pydantic import BaseModel
-
+ 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # ---- helpers：生成 txid + 追加历史记录 ----
 def _gen_txid(prefix: str = "0x") -> str:
     return prefix + secrets.token_hex(12)
+
+# ---------- evidence_meta 表：保存业务编号/标题/Owner ----------
+def ensure_evidence_table():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS evidence_meta (
+                cert_id    TEXT PRIMARY KEY,
+                case_id    TEXT,
+                title      TEXT,
+                owner      TEXT,
+                source     TEXT,
+                notes      TEXT,
+                updated_at TEXT
+            )
+        """))
+
+def load_evidence_meta(cert_id: str):
+    ensure_evidence_table()
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT cert_id, case_id, title, owner, source, notes, updated_at "
+                 "FROM evidence_meta WHERE cert_id = :cid"),
+            {"cid": cert_id}
+        ).mappings().first()
+    return row
 
 def _append_receipt(app, cert_id: str, item: dict):
     # 在内存里维护一个按 cert_id 分组的收据表
@@ -154,7 +186,7 @@ def _match_query(item: dict, q: str) -> bool:
             if t.lower() not in blob.lower():
                 return False
     return True
-
+ 
 @app.get("/api/receipts/count")
 def receipts_count(
     cert_id: str = Query(..., min_length=1),
@@ -242,6 +274,15 @@ def vault(
     end = start + size
     page_rows = rows[start:end]
 
+    # === 新增：读取当前 cert_id 对应的业务信息 ===
+    evidence = None
+    try:
+        meta = load_evidence_meta(cert_id)
+        if meta:
+            evidence = dict(meta)
+    except Exception as e:
+        logger.info("vault: load_evidence_meta failed: %s", _safe_err(e))
+
     return templates.TemplateResponse(
         "vault.html",
         {
@@ -255,6 +296,7 @@ def vault(
             "size": size,
             "sort": sort,
             "order": "asc" if not reverse else "desc",
+            "evidence": evidence,   # ← 新增：把业务信息传给模板
         },
     )
 
@@ -428,6 +470,23 @@ def verify_upgrade_page(cert_id: str, request: Request):
         except Exception:
             pass
 
+    # C) 叠加 evidence_meta 表里的业务字段（case_id / title / owner / source / notes）
+    try:
+        meta = load_evidence_meta(cert_id)
+        if meta:
+            ev = ctx.get("evidence") or {}
+            ev.update({
+                "case_id": meta.get("case_id"),
+                "title":   meta.get("title"),
+                "owner":   meta.get("owner"),
+                "source":  meta.get("source"),
+                "notes":   meta.get("notes"),
+            })
+            ctx["evidence"] = ev
+    except Exception:
+        pass
+
+    merge_biz_into_ctx(cert_id, ctx)
     return templates.TemplateResponse("verify_upgrade.html", ctx)
 
 @app.get("/api/tsa/config")
@@ -525,12 +584,36 @@ def ci_export_csv(cert_id: str = Query("demo-cert"), q: str = Query("", descript
     rows = [r for r in rows if _match_query(r, q)]
     logger.info("export_csv requested cert_id=%s q=%s rows=%d", cert_id, q, len(rows))
 
+    # === 新增：读取业务信息（case_id / title / owner），方便写进 CSV ===
+    case_id = ""
+    title   = ""
+    owner   = ""
+    try:
+        meta = load_evidence_meta(cert_id)
+        if meta:
+            # meta 是 mappings() 出来的 dict-like
+            case_id = meta.get("case_id") or ""
+            title   = meta.get("title") or ""
+            owner   = meta.get("owner") or ""
+    except Exception as e:
+        logger.info("export_csv: load_evidence_meta failed: %s", _safe_err(e))
+
     def gen():
         out = io.StringIO()
         w = csv.writer(out)
-        w.writerow(["cert_id", "provider", "status", "txid", "created_at"])
+        # 表头里加上业务字段
+        w.writerow(["cert_id", "case_id", "title", "owner", "provider", "status", "txid", "created_at"])
         for r in rows:
-            w.writerow([cert_id, r.get("provider"), r.get("status"), r.get("txid"), r.get("time")])
+            w.writerow([
+                cert_id,
+                case_id,
+                title,
+                owner,
+                r.get("provider"),
+                r.get("status"),
+                r.get("txid"),
+                r.get("time"),
+            ])
         yield "\ufeff" + out.getvalue()  # UTF-8 BOM，Excel 友好
 
     resp = StreamingResponse(gen(), media_type="text/csv; charset=utf-8")
@@ -553,6 +636,119 @@ def ci_clear(cert_id: str = Query(None)):
     return {"ok": True, "cleared": cleared}
 # ===== end CI fallback =====
 
+# ============================================================
+# 业务信息（case_id / title / owner）持久化到 SQLite
+# ============================================================
+
+class EvidenceUpdate(BaseModel):
+    cert_id: str
+    case_id: str | None = None
+    title: str | None = None
+    owner: str | None = None
+    source: str | None = None
+    notes: str | None = None
+
+
+_BIZ_DB_PATH = Path("data") / "verify_upgrade.db"
+
+
+def _biz_get_conn():
+    """获取业务信息使用的 sqlite 连接（复用现有 verify_upgrade.db，没有就不创建）"""
+    # 如果 db 文件不存在，就直接返回 None（不强制创建）
+    if not _BIZ_DB_PATH.exists():
+        return None
+    conn = sqlite3.connect(_BIZ_DB_PATH)
+    return conn
+
+
+def _biz_ensure_table(conn: sqlite3.Connection):
+    """确保 evidence_meta 表存在"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS evidence_meta (
+            cert_id    TEXT PRIMARY KEY,
+            case_id    TEXT,
+            title      TEXT,
+            owner      TEXT,
+            source     TEXT,
+            notes      TEXT,
+            updated_at TEXT
+        )
+    """)
+    conn.commit()
+
+
+@app.post("/api/evidence/update")
+async def api_evidence_update(payload: EvidenceUpdate):
+    """
+    保存业务编号 / 标题 / Owner 等信息到 sqlite 的 evidence_meta 表。
+    对同一个 cert_id 多次调用会更新同一行。
+    """
+    conn = _biz_get_conn()
+    # 如果 db 文件还不存在，可以选择直接跳过，也可以创建，这里我们尝试创建一下
+    if conn is None:
+        _BIZ_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(_BIZ_DB_PATH)
+
+    try:
+        _biz_ensure_table(conn)
+        now = datetime.utcnow().isoformat()
+        conn.execute("""
+            INSERT INTO evidence_meta (cert_id, case_id, title, owner, source, notes, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cert_id) DO UPDATE SET
+              case_id    = excluded.case_id,
+              title      = excluded.title,
+              owner      = excluded.owner,
+              source     = excluded.source,
+              notes      = excluded.notes,
+              updated_at = excluded.updated_at
+        """, (
+            payload.cert_id,
+            payload.case_id,
+            payload.title,
+            payload.owner,
+            payload.source,
+            payload.notes,
+            now,
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"ok": True}
+
+
+def merge_biz_into_ctx(cert_id: str, ctx: dict):
+    """
+    在渲染 verify 页面前，从 evidence_meta 里把业务字段合并到 ctx["evidence"]。
+    """
+    conn = _biz_get_conn()
+    if conn is None:
+        return
+    try:
+        _biz_ensure_table(conn)
+        cur = conn.execute(
+            "SELECT case_id, title, owner, source, notes FROM evidence_meta WHERE cert_id = ?",
+            (cert_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return
+        case_id, title, owner, source, notes = row
+        ev = dict(ctx.get("evidence") or {})
+        if case_id is not None:
+            ev["case_id"] = case_id
+        if title is not None:
+            ev["title"] = title
+        if owner is not None:
+            ev["owner"] = owner
+        if source is not None:
+            ev["source"] = source
+        if notes is not None:
+            ev["notes"] = notes
+        ctx["evidence"] = ev
+    finally:
+        conn.close()
 
  
 
