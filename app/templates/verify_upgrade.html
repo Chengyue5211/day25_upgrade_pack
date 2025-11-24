@@ -77,6 +77,50 @@
     </p>
   </div>
 
+  {# 计算最近一条回执，用于“最近回执”和写入 Vault 按钮 #}
+  {% set last_provider = None %}
+  {% set last_status = '' %}
+  {% set last_txid = '' %}
+
+  {% if history is defined and history and history|length > 0 %}
+    {% set _last = history[0] %}
+    {% if _last is mapping %}
+      {% set last_provider = _last.get('provider') %}
+      {% set last_status   = _last.get('status') %}
+      {% set last_txid     = _last.get('txid') %}
+    {% else %}
+      {% set last_provider = _last.provider %}
+      {% set last_status   = _last.status %}
+      {% set last_txid     = _last.txid %}
+    {% endif %}
+  {% elif tsa_last_status is defined %}
+    {# 如果没有 history，但还有 tsa_last_*，用它做后备 #}
+    {% set last_status = tsa_last_status|default('', true) %}
+    {% set last_txid   = tsa_last_txid|default('', true) %}
+  {% endif %}
+
+  {# 计算最近一条回执：优先用 history[0]，无论是 tsa 还是 chain #}
+  {% set last_provider = None %}
+  {% set last_status = '' %}
+  {% set last_txid = '' %}
+
+  {% if history is defined and history and history|length > 0 %}
+    {% set _last = history[0] %}
+    {% if _last is mapping %}
+      {% set last_provider = _last.get('provider') %}
+      {% set last_status   = _last.get('status') %}
+      {% set last_txid     = _last.get('txid') %}
+    {% else %}
+      {% set last_provider = _last.provider %}
+      {% set last_status   = _last.status %}
+      {% set last_txid     = _last.txid %}
+    {% endif %}
+  {% elif tsa_last_status is defined %}
+    {# 没有 history 时，用 tsa_last_* 作为后备 #}
+    {% set last_status = tsa_last_status|default('', true) %}
+    {% set last_txid   = tsa_last_txid|default('', true) %}
+  {% endif %}
+
   <div class="card">
     <div class="card-header">
       <h3>最近回执</h3>
@@ -86,10 +130,7 @@
         <span class="card-sub">暂无数据</span>
       {% endif %}
     </div>
-    {% set last_status = tsa_last_status|default('', true) %}
-    {% set last_txid   = tsa_last_txid|default('', true) %}
-    {% set last_provider = (history[0]['provider'] if (history is defined and history and history|length>0 and history[0] is mapping and 'provider' in history[0]) else
-                            (history[0].provider if (history is defined and history and history|length>0 and history[0] is not mapping and history[0].provider is defined) else None)) %}
+
     {% if last_status %}
       <p>
         <span class="card-sub">来源：</span>
@@ -99,6 +140,7 @@
           <span class="muted">未知</span>
         {% endif %}
       </p>
+
       <p>
         <span class="card-sub">状态：</span>
         {% set st = 'success' if last_status in ['ok','success']
@@ -106,6 +148,7 @@
          else 'pending' %}
         <span class="status-{{ st }}">{{ last_status }}</span>
       </p>
+
       <p>
         <span class="card-sub">TX：</span>
         {% if last_txid %}
@@ -119,6 +162,7 @@
       <p class="muted">暂无回执。请先调用 TSA/Chain 回执接口。</p>
     {% endif %}
   </div>
+
   <div class="card">
     <div class="card-header">
       <h3>回执历史（近 5 条）</h3>
@@ -150,19 +194,120 @@
       <p class="muted">暂无历史记录。</p>
     {% endif %}
   </div>
-
   <div class="card">
-    <h3>证据信息（示例字段）</h3>
+    <h3>证据信息（业务字段预留）</h3>
     {% set ev = evidence if evidence is defined else {} %}
+
+    <!-- 输入区：业务编号 + 标题 + Owner -->
+    <div style="margin-bottom:8px;font-size:13px;">填写 / 修改业务信息（目前仅前端展示）：</div>
+    <div style="display:flex;flex-direction:column;gap:6px;max-width:420px;margin-bottom:10px;">
+      <label style="font-size:13px;display:flex;flex-direction:column;gap:2px;">
+        <span>业务编号：</span>
+        <input id="biz-case-id" name="case_id"
+               value="{{ (ev.case_id if ev is not mapping else ev.get('case_id'))|default('', true) }}"
+               placeholder="如：2025-11-23-A01"
+               style="width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:6px;">
+      </label>
+
+      <label style="font-size:13px;display:flex;flex-direction:column;gap:2px;">
+        <span>证据标题：</span>
+        <input id="biz-title" name="title"
+               value="{{ (ev.title if ev is not mapping else ev.get('title'))|default('', true) }}"
+               placeholder="如：Demo Evidence / 学生作品说明"
+               style="width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:6px;">
+      </label>
+
+      <label style="font-size:13px;display:flex;flex-direction:column;gap:2px;">
+        <span>证据主体（Owner）：</span>
+        <input id="biz-owner" name="owner"
+               value="{{ (ev.owner if ev is not mapping else ev.get('owner'))|default('', true) }}"
+               placeholder="如：Tom / Demo Student"
+               style="width:100%;padding:4px 6px;border:1px solid #ddd;border-radius:6px;">
+      </label>
+    </div>
+    <div style="margin-bottom:8px;">
+      <button id="btn-save-biz" class="btn btn-xs" style="padding:4px 10px;border-radius:6px;">
+        保存业务信息
+      </button>
+      <span id="biz-msg" class="muted" style="margin-left:8px;font-size:12px;"></span>
+    </div>
+ 
+    <!-- 当前值展示（从 evidence 里读） -->
     <ul>
-      <li>文件：<code>{{ (ev.file_path if ev is not mapping else ev.get('file_path'))|default('--') }}</code></li>
-      <li>SHA-256：<code>{{ (ev.sha256   if ev is not mapping else ev.get('sha256'))|default('--') }}</code></li>
-      <li>C2PA Claim：<code>{{ (ev.c2pa_claim if ev is not mapping else ev.get('c2pa_claim'))|default('--') }}</code></li>
-      <li>TSA URL：<code>{{ (ev.tsa_url if ev is not mapping else ev.get('tsa_url'))|default('--') }}</code></li>
-      <li>Sepolia Tx：<code>{{ (ev.sepolia_txhash if ev is not mapping else ev.get('sepolia_txhash'))|default('--') }}</code></li>
+      <li>
+        <strong>业务编号（当前）：</strong>
+        <code>
+          {{ (ev.case_id if ev is not mapping else ev.get('case_id'))|default('--') }}
+        </code>
+      </li>
+      <li>
+        <strong>证据标题（当前）：</strong>
+        <code>
+          {{ (ev.title if ev is not mapping else ev.get('title'))|default('--') }}
+        </code>
+      </li>
+      <li>
+        <strong>证据主体（Owner，当前）：</strong>
+        <code>
+          {{ (ev.owner if ev is not mapping else ev.get('owner'))|default('--') }}
+        </code>
+      </li>
+      <li>
+        <strong>来源渠道：</strong>
+        <code>
+          {{ (ev.source if ev is not mapping else ev.get('source'))|default('--') }}
+        </code>
+      </li>
+      <li>
+        <strong>备注说明：</strong>
+        <code>
+          {{ (ev.notes if ev is not mapping else ev.get('notes'))|default('--') }}
+        </code>
+      </li>
     </ul>
-    <p class="muted">以上为示例位，可与实际入库字段对齐替换。</p>
+
+    <hr style="border:none;border-top:1px dashed #eee;margin:10px 0;">
+
+    <p class="muted" style="margin:4px 0 6px;">技术证明字段：</p>
+    <ul>
+      <li>
+        <strong>文件路径：</strong>
+        <code>
+          {{ (ev.file_path if ev is not mapping else ev.get('file_path'))|default('--') }}
+        </code>
+      </li>
+      <li>
+        <strong>SHA-256：</strong>
+        <code>
+          {{ (ev.sha256 if ev is not mapping else ev.get('sha256'))|default('--') }}
+        </code>
+      </li>
+      <li>
+        <strong>C2PA Claim：</strong>
+        <code>
+          {{ (ev.c2pa_claim if ev is not mapping else ev.get('c2pa_claim'))|default('--') }}
+        </code>
+      </li>
+      <li>
+        <strong>TSA URL：</strong>
+        <code>
+          {{ (ev.tsa_url if ev is not mapping else ev.get('tsa_url'))|default('--') }}
+        </code>
+      </li>
+      <li>
+        <strong>链上 Tx（Sepolia）：</strong>
+        <code>
+          {{ (ev.sepolia_txhash if ev is not mapping else ev.get('sepolia_txhash'))|default('--') }}
+        </code>
+      </li>
+    </ul>
+
+    <p class="muted" style="margin-top:6px;">
+    上面的输入框用于填写“业务编号 / 标题 / Owner”，点击「保存业务信息」后会写入本地数据库；
+    下半部分为技术证明字段，仍然从 evidence 里读取，未提供时显示为 “--”。
+    </p>
   </div>
+
 <!-- 快捷操作 + 健康提示条 -->
 <div id="quick-actions" style="margin:10px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
   <button id="btn-refresh" style="padding:6px 10px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;cursor:pointer">刷新历史</button>
@@ -367,6 +512,44 @@ function csvCell(v){
   if (btnClearAll) {
     const isLocal = (location.hostname === '127.0.0.1' || location.hostname === 'localhost');
     if (isLocal) btnClearAll.style.display = 'inline-block';
+  // 保存业务信息（case_id / title / owner）
+  const btnSaveBiz = document.getElementById('btn-save-biz');
+  if (btnSaveBiz) {
+    btnSaveBiz.onclick = async () => {
+      const caseId = document.getElementById('biz-case-id')?.value || '';
+      const title  = document.getElementById('biz-title')?.value || '';
+      const owner  = document.getElementById('biz-owner')?.value || '';
+      const infoEl = document.getElementById('biz-msg');
+
+      if (infoEl) infoEl.textContent = '保存中…';
+      btnSaveBiz.disabled = true;
+
+      try {
+        const payload = {
+          cert_id: cert,
+          case_id: caseId,
+          title:   title,
+          owner:   owner
+        };
+        const res  = await fetch('/api/evidence/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data && data.ok === false) {
+          throw new Error(data.error || '保存失败');
+        }
+
+        if (infoEl) infoEl.textContent = '已保存（刷新后可看到“当前”字段更新）';
+      } catch (e) {
+        if (infoEl) infoEl.textContent = '保存失败：' + (e && e.message ? e.message : '请稍后重试');
+      } finally {
+        btnSaveBiz.disabled = false;
+      }
+    };
+  }
+
 
     btnClearAll.onclick = async () => {
       if (!isLocal) return;
