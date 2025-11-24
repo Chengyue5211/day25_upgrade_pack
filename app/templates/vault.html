@@ -48,12 +48,27 @@ button[disabled], .btn[disabled]{ opacity:.55; cursor:not-allowed; }
   <div><strong>业务编号：</strong> {{ evidence.case_id or '——' }}</div>
   <div><strong>证据标题：</strong> {{ evidence.title or '——' }}</div>
   <div><strong>Owner：</strong> {{ evidence.owner or '——' }}</div>
+  <div style="margin-top: 6px;">
+    <a href="/verify_upgrade/{{ cert_id }}#biz-info"
+       class="btn"
+       style="padding:4px 10px; font-size:12px;">
+      编辑业务信息
+    </a>
+  </div>
 </div>
 {% else %}
 <div class="card" style="margin-top: 8px; margin-bottom: 12px;">
   <div><strong>业务信息：</strong> 暂无（请在 Verify 页面填写并保存后再刷新）</div>
+  <div style="margin-top: 6px;">
+    <a href="/verify_upgrade/{{ cert_id }}#biz-info"
+       class="btn"
+       style="padding:4px 10px; font-size:12px;">
+      去填写业务信息
+    </a>
+  </div>
 </div>
 {% endif %}
+
 
 <div class="muted" style="margin-top:4px;margin-bottom:8px;font-size:13px;color:#555;">
   当前证书：<code>{{ cert_id }}</code>
